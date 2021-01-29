@@ -14,8 +14,8 @@
     "build:types": "node tools/cleanup types && tsc -p config/tsconfig.types.json",
     "clean": "node tools/cleanup",
     "package": "npm run build && npm pack",
-    "test": "jest",
-    "test:cov": "jest --coverage",
+    "test": "jest --no-cache",
+    "test:cov": "jest --no-cache --coverage",
     "addscope": "node tools/packagejson name @tomchen/bdfparser && prettier --write package.json"
   },
   "publishConfig": {

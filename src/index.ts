@@ -1,17 +1,9 @@
-import {
-  Font,
-  Glyph,
-  // Bitmap
-} from './bdfparser'
+import { Font, Glyph, Bitmap } from './bdfparser'
 
 export default {
   Font,
   Glyph,
-  // Bitmap
+  Bitmap,
 }
 
-export {
-  Font,
-  Glyph,
-  // Bitmap
-}
+export { Font, Glyph, Bitmap }

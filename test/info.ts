@@ -60,11 +60,11 @@ export const bitmap_a_bindata = [
 
 export const specfont_path = './test/fonts/spec_example_fixed.bdf'
 
-export const bitmap_qr2_bindata = ['01110', '02110', '01102', '10200', '01000']
+export const bitmap_qr2_bindata = ['01110', '02112', '01102', '10200', '01000']
 
 export const bitmap_qr3_bindata = [
   '0111000000',
-  '0211000000',
+  '0211200000',
   '0110200030',
   '1020000021',
   '0100000000',

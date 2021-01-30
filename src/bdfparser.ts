@@ -1,53 +1,129 @@
-import * as fs from 'fs'
-import * as readline from 'readline'
+type Headers = {
+  bdfversion?: number
+  fontname?: string
+  pointsize?: number
+  xres?: number
+  yres?: number
+  fbbx?: number
+  fbby?: number
+  fbbxoff?: number
+  fbbyoff?: number
+  swx0?: number
+  swy0?: number
+  dwx0?: number
+  dwy0?: number
+  swx1?: number
+  swy1?: number
+  dwx1?: number
+  dwy1?: number
+  vvectorx?: number
+  vvectory?: number
+  metricsset?: number
+  contentversion?: number
+  comment?: string[]
+}
+type Props = Record<string, string | null> & { comment?: string[] }
 
-// import { BufReader, readLines } from 'https://deno.land/std@0.84.0/io/bufio.ts'
-
-// const fileLineIter = (filepath) => {
-//   const file = await Deno.open(filepath)
-//   const bufReader = new BufReader(file)
-//   return readLines(bufReader)
-// }
-
-export const fileLineIter = (filepath) => {
-  const fileStream = fs.createReadStream(filepath)
-  const rl = readline.createInterface({
-    input: fileStream,
-  })
-  return rl[Symbol.asyncIterator]()
+type GlyphMeta = {
+  glyphname?: string | null
+  codepoint?: number
+  bbw?: number | null
+  bbh?: number | null
+  bbxoff?: number | null
+  bbyoff?: number | null
+  swx0?: number | null
+  swy0?: number | null
+  dwx0?: number | null
+  dwy0?: number | null
+  swx1?: number | null
+  swy1?: number | null
+  dwx1?: number | null
+  dwy1?: number | null
+  vvectorx?: number | null
+  vvectory?: number | null
+  hexdata?: string[]
 }
 
-export const replaceAll = (str, substr, newsubstr) => {
-  if ('replaceAll' in String.prototype) {
-    return str.replaceAll(substr, newsubstr)
-  } else {
-    const escapeRegExp = (string) =>
-      string.replace(/[.*+\-?^${}()|[\]\\]/g, '\\$&')
-    return str.replace(new RegExp(escapeRegExp(substr), 'g'), newsubstr)
-  }
-}
+type GlyphMetaInFont =
+  | [
+      string | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      number | null,
+      string[] | null
+    ]
+  | null
 
-const in_es6 = function (left, right) {
-  if (right instanceof Array || typeof right === 'string') {
-    return right.indexOf(left) > -1
-  } else {
-    if (
-      right instanceof Map ||
-      right instanceof Set ||
-      right instanceof WeakMap ||
-      right instanceof WeakSet
-    ) {
-      return right.has(left)
-    } else {
-      return left in right
-    }
-  }
+const __PATTERN_VVECTOR_DELIMITER = '[\\s]+'
+// prettier-ignore
+const __META_TITLES: [
+    'glyphname',
+    'codepoint',
+    'bbw',
+    'bbh',
+    'bbxoff',
+    'bbyoff',
+    'swx0',
+    'swy0',
+    'dwx0',
+    'dwy0',
+    'swx1',
+    'swy1',
+    'dwx1',
+    'dwy1',
+    'vvectorx',
+    'vvectory',
+    'hexdata',
+  ] = [
+    'glyphname',
+    'codepoint',
+    'bbw',
+    'bbh',
+    'bbxoff',
+    'bbyoff',
+    'swx0',
+    'swy0',
+    'dwx0',
+    'dwy0',
+    'swx1',
+    'swy1',
+    'dwx1',
+    'dwy1',
+    'vvectorx',
+    'vvectory',
+    'hexdata',
+  ]
+const __EMPTY_GLYPH = {
+  glyphname: 'empty',
+  codepoint: 8203,
+  bbw: 0,
+  bbh: 0,
+  bbxoff: 0,
+  bbyoff: 0,
+  swx0: 0,
+  swy0: 0,
+  dwx0: 0,
+  dwy0: 0,
+  swx1: 0,
+  swy1: 0,
+  dwx1: 0,
+  dwy1: 0,
+  vvectorx: 0,
+  vvectory: 0,
+  hexdata: [] as string[],
 }
-
-const range = (start, stop, step = 1) =>
-  Array(Math.ceil((stop - start) / step))
-    .fill(start)
-    .map((x, y) => x + y * step)
 
 export class Font {
   /*
@@ -55,108 +131,32 @@ export class Font {
 
     https://font.tomchen.org/bdfparser_py/font
     */
+  public headers: Headers = {}
+  public props: Props = {}
+  public glyphs: Map<number, GlyphMetaInFont> = new Map()
+  private __glyph_count_to_check: number | null = null
+  private __curline_startchar: string | null = null
+  private __curline_chars: string | null = null
+  private __f?: AsyncIterator<string>
 
-  private __PATTERN_VVECTOR_DELIMITER: string
-  private __META_TITLES: string[]
-  private __EMPTY_GLYPH: any
-  public headers: any
-  public props: any
-  public glyphs: any
-  private __glyph_count_to_check: any
-  private __curline_startchar: any
-  private __curline_chars: any
-  private __f: any
-
-  constructor() {
-    /*
-        Initialize a `Font` Object. Load the BDF font file if a file path string or a file Object is present.
-
-        https://font.tomchen.org/bdfparser_py/font#font
-        */
-    this.__PATTERN_VVECTOR_DELIMITER = '[\\s]+'
-    this.__META_TITLES = [
-      'glyphname',
-      'codepoint',
-      'bbw',
-      'bbh',
-      'bbxoff',
-      'bbyoff',
-      'swx0',
-      'swy0',
-      'dwx0',
-      'dwy0',
-      'swx1',
-      'swy1',
-      'dwx1',
-      'dwy1',
-      'vvectorx',
-      'vvectory',
-      'hexdata',
-    ]
-    this.__EMPTY_GLYPH = {
-      glyphname: 'empty',
-      codepoint: 8203,
-      bbw: 0,
-      bbh: 0,
-      bbxoff: 0,
-      bbyoff: 0,
-      swx0: 0,
-      swy0: 0,
-      dwx0: 0,
-      dwy0: 0,
-      swx1: 0,
-      swy1: 0,
-      dwx1: 0,
-      dwy1: 0,
-      vvectorx: 0,
-      vvectory: 0,
-      hexdata: [],
-    }
-    this.headers = {}
-    this.props = {}
-    this.glyphs = new Map()
-    this.__glyph_count_to_check = null
-    this.__curline_startchar = null
-    this.__curline_chars = null
-    // const l = argv.length
-    // if (l === 1) {
-    //   arg = argv[0]
-    //   if (typeof arg === 'string' || typeof arg === 'string') {
-    //     await this.load_file_path(arg)
-    //   } else {
-    //     if (typeof arg === 'object' && typeof arg.next === 'function') {
-    //       await this.load_file_line_iter(arg)
-    //     }
-    //   }
-    // }
-  }
-  async load_file_path(file_path) {
-    /*
-        Load the BDF font file in the file path.
-
-        https://font.tomchen.org/bdfparser_py/font#load_file_path
-        */
-    const file_line_iter = fileLineIter(file_path)
-    await this.load_file_line_iter(file_line_iter)
-    return this
-  }
-  async load_file_line_iter(file_line_iter) {
+  async load_filelines(filelines: AsyncIterator<string>): Promise<this> {
     /*
         Load the BDF font file line async iterator.
         */
-    this.__f = file_line_iter
+    this.__f = filelines
     await this.__parse_headers()
     return this
   }
-  async __parse_headers() {
-    let comment, key, kvlist, l, line, nlist, value
+
+  async __parse_headers(): Promise<void> {
     while (1) {
-      line = (await this.__f.next())?.value
-      kvlist = line.split(/ (.+)/, 2)
-      l = kvlist.length
+      const line: string = (await this.__f?.next())?.value
+      const kvlist = line.split(/ (.+)/, 2)
+      const l = kvlist.length
+      let nlist: string[]
       if (l === 2) {
-        key = kvlist[0]
-        value = kvlist[1].trim()
+        const key = kvlist[0]
+        const value = kvlist[1].trim()
         switch (key) {
           case 'STARTFONT':
             this.headers['bdfversion'] = parseFloat(value)
@@ -166,58 +166,62 @@ export class Font {
             break
           case 'SIZE':
             nlist = value.split(' ')
-            this.headers['pointsize'] = parseInt(nlist[0])
-            this.headers['xres'] = parseInt(nlist[1])
-            this.headers['yres'] = parseInt(nlist[2])
+            this.headers['pointsize'] = parseInt(nlist[0], 10)
+            this.headers['xres'] = parseInt(nlist[1], 10)
+            this.headers['yres'] = parseInt(nlist[2], 10)
             break
           case 'FONTBOUNDINGBOX':
             nlist = value.split(' ')
-            this.headers['fbbx'] = parseInt(nlist[0])
-            this.headers['fbby'] = parseInt(nlist[1])
-            this.headers['fbbxoff'] = parseInt(nlist[2])
-            this.headers['fbbyoff'] = parseInt(nlist[3])
+            this.headers['fbbx'] = parseInt(nlist[0], 10)
+            this.headers['fbby'] = parseInt(nlist[1], 10)
+            this.headers['fbbxoff'] = parseInt(nlist[2], 10)
+            this.headers['fbbyoff'] = parseInt(nlist[3], 10)
             break
           case 'STARTPROPERTIES':
             this.__parse_headers_after()
             await this.__parse_props()
             return
           case 'COMMENT':
-            comment = 'comment'
-            if (!in_es6(comment, this.headers)) {
-              this.headers[comment] = []
+            if (
+              !('comment' in this.headers) ||
+              !Array.isArray(this.headers.comment)
+            ) {
+              this.headers.comment = []
             }
-            this.headers[comment].push(
+            this.headers.comment.push(
               value.replace(/^[\s"'\t\r\n]+|[\s"'\t\r\n]+$/g, '')
             )
             break
           case 'SWIDTH':
             nlist = value.split(' ')
-            this.headers['swx0'] = parseInt(nlist[0])
-            this.headers['swy0'] = parseInt(nlist[1])
+            this.headers['swx0'] = parseInt(nlist[0], 10)
+            this.headers['swy0'] = parseInt(nlist[1], 10)
             break
           case 'DWIDTH':
             nlist = value.split(' ')
-            this.headers['dwx0'] = parseInt(nlist[0])
-            this.headers['dwy0'] = parseInt(nlist[1])
+            this.headers['dwx0'] = parseInt(nlist[0], 10)
+            this.headers['dwy0'] = parseInt(nlist[1], 10)
             break
           case 'SWIDTH1':
             nlist = value.split(' ')
-            this.headers['swx1'] = parseInt(nlist[0])
-            this.headers['swy1'] = parseInt(nlist[1])
+            this.headers['swx1'] = parseInt(nlist[0], 10)
+            this.headers['swy1'] = parseInt(nlist[1], 10)
             break
           case 'DWIDTH1':
             nlist = value.split(' ')
-            this.headers['dwx1'] = parseInt(nlist[0])
-            this.headers['dwy1'] = parseInt(nlist[1])
+            this.headers['dwx1'] = parseInt(nlist[0], 10)
+            this.headers['dwy1'] = parseInt(nlist[1], 10)
             break
           case 'VVECTOR':
-            nlist = this.__PATTERN_VVECTOR_DELIMITER.split(value)
-            this.headers['vvectorx'] = parseInt(nlist[0])
-            this.headers['vvectory'] = parseInt(nlist[1])
+            nlist = __PATTERN_VVECTOR_DELIMITER.split(value)
+            this.headers['vvectorx'] = parseInt(nlist[0], 10)
+            this.headers['vvectory'] = parseInt(nlist[1], 10)
             break
           case 'METRICSSET':
           case 'CONTENTVERSION':
-            this.headers[key.toLowerCase()] = parseInt(value)
+            this.headers[
+              <'metricsset' | 'contentversion'>key.toLowerCase()
+            ] = parseInt(value, 10)
             break
           case 'CHARS':
             console.warn(
@@ -247,26 +251,29 @@ export class Font {
       }
     }
   }
-  __parse_headers_after() {
-    if (!in_es6('metricsset', this.headers)) {
+
+  __parse_headers_after(): void {
+    if (!('metricsset' in this.headers)) {
       this.headers['metricsset'] = 0
     }
   }
-  async __parse_props() {
-    let comment, key, kvlist, l, line, value
+
+  async __parse_props(): Promise<void> {
     while (1) {
-      line = (await this.__f.next())?.value
-      kvlist = line.split(/ (.+)/, 2)
-      l = kvlist.length
+      const line: string = (await this.__f?.next())?.value
+      const kvlist = line.split(/ (.+)/, 2)
+      const l = kvlist.length
       if (l === 2) {
-        key = kvlist[0]
-        value = kvlist[1].replace(/^[\s"'\t\r\n]+|[\s"'\t\r\n]+$/g, '')
+        const key = kvlist[0]
+        const value = kvlist[1].replace(/^[\s"'\t\r\n]+|[\s"'\t\r\n]+$/g, '')
         if (key === 'COMMENT') {
-          comment = 'comment'
-          if (!in_es6(comment, this.props)) {
-            this.props[comment] = []
+          if (
+            !('comment' in this.props) ||
+            !Array.isArray(this.props.comment)
+          ) {
+            this.props.comment = []
           }
-          this.props[comment].push(
+          this.props.comment.push(
             value.replace(/^[\s"'\t\r\n]+|[\s"'\t\r\n]+$/g, '')
           )
         } else {
@@ -274,7 +281,7 @@ export class Font {
         }
       } else {
         if (l === 1) {
-          key = kvlist[0].trim()
+          const key = kvlist[0].trim()
           if (key === 'ENDPROPERTIES') {
             await this.__parse_glyph_count()
             return
@@ -289,10 +296,11 @@ export class Font {
       }
     }
   }
-  async __parse_glyph_count() {
-    let line
-    if (this.__curline_chars === undefined || this.__curline_chars === null) {
-      line = (await this.__f.next())?.value
+
+  async __parse_glyph_count(): Promise<void> {
+    let line: string
+    if (this.__curline_chars === null) {
+      line = (await this.__f?.next())?.value
     } else {
       line = this.__curline_chars
       this.__curline_chars = null
@@ -303,35 +311,29 @@ export class Font {
     }
     const kvlist = line.split(/ (.+)/, 2)
     if (kvlist[0] === 'CHARS') {
-      this.__glyph_count_to_check = parseInt(kvlist[1].trim())
+      this.__glyph_count_to_check = parseInt(kvlist[1].trim(), 10)
     } else {
       this.__curline_startchar = line
       console.warn("Cannot find 'CHARS' line next to 'ENDPROPERTIES' line")
     }
     await this.__prepare_glyphs()
   }
-  async __prepare_glyphs() {
-    let glyph_bitmap,
-      glyph_bitmap_is_on,
-      glyph_codepoint,
-      glyph_end,
-      glyph_meta,
-      key,
-      kvlist,
-      l,
-      line,
-      nlist,
-      value
-    glyph_meta = []
-    glyph_bitmap = []
-    glyph_bitmap_is_on = false
-    glyph_end = false
+
+  async __prepare_glyphs(): Promise<void> {
+    let glyph_codepoint = 0
+    // Array(17).fill(null) 's tuple representation
+    // prettier-ignore
+    let glyph_meta: GlyphMetaInFont = [
+      null, null, null, null, null, null, null, null, null, null,
+      null, null, null, null, null, null, null,
+    ] // TODO: remove initial value
+    let glyph_bitmap: string[] = [] // TODO: remove initial value
+    let glyph_bitmap_is_on = false
+    let glyph_end = false
     while (1) {
-      if (
-        this.__curline_startchar === undefined ||
-        this.__curline_startchar === null
-      ) {
-        line = (await this.__f.next())?.value
+      let line: string
+      if (this.__curline_startchar === null) {
+        line = (await this.__f?.next())?.value
       } else {
         line = this.__curline_startchar
         this.__curline_startchar = null
@@ -341,57 +343,63 @@ export class Font {
         this.__prepare_glyphs_after()
         return
       }
-      kvlist = line.split(/ (.+)/, 2)
-      l = kvlist.length
+      const kvlist = line.split(/ (.+)/, 2)
+      const l = kvlist.length
       if (l === 2) {
-        key = kvlist[0]
-        value = kvlist[1].trim()
+        const key = kvlist[0]
+        const value = kvlist[1].trim()
+        let nlist: string[]
         switch (key) {
           case 'STARTCHAR':
-            glyph_meta = Array(17).fill(null)
+            // Array(17).fill(null) 's tuple representation
+            // prettier-ignore
+            glyph_meta = [
+              null, null, null, null, null, null, null, null, null, null,
+              null, null, null, null, null, null, null,
+            ]
             glyph_meta[0] = value
             glyph_end = false
             break
           case 'ENCODING':
-            glyph_codepoint = parseInt(value)
+            glyph_codepoint = parseInt(value, 10)
             glyph_meta[1] = glyph_codepoint
             break
           case 'BBX':
             nlist = value.split(' ')
-            glyph_meta[2] = parseInt(nlist[0])
-            glyph_meta[3] = parseInt(nlist[1])
-            glyph_meta[4] = parseInt(nlist[2])
-            glyph_meta[5] = parseInt(nlist[3])
+            glyph_meta[2] = parseInt(nlist[0], 10)
+            glyph_meta[3] = parseInt(nlist[1], 10)
+            glyph_meta[4] = parseInt(nlist[2], 10)
+            glyph_meta[5] = parseInt(nlist[3], 10)
             break
           case 'SWIDTH':
             nlist = value.split(' ')
-            glyph_meta[6] = parseInt(nlist[0])
-            glyph_meta[7] = parseInt(nlist[1])
+            glyph_meta[6] = parseInt(nlist[0], 10)
+            glyph_meta[7] = parseInt(nlist[1], 10)
             break
           case 'DWIDTH':
             nlist = value.split(' ')
-            glyph_meta[8] = parseInt(nlist[0])
-            glyph_meta[9] = parseInt(nlist[1])
+            glyph_meta[8] = parseInt(nlist[0], 10)
+            glyph_meta[9] = parseInt(nlist[1], 10)
             break
           case 'SWIDTH1':
             nlist = value.split(' ')
-            glyph_meta[10] = parseInt(nlist[0])
-            glyph_meta[11] = parseInt(nlist[1])
+            glyph_meta[10] = parseInt(nlist[0], 10)
+            glyph_meta[11] = parseInt(nlist[1], 10)
             break
           case 'DWIDTH1':
             nlist = value.split(' ')
-            glyph_meta[12] = parseInt(nlist[0])
-            glyph_meta[13] = parseInt(nlist[1])
+            glyph_meta[12] = parseInt(nlist[0], 10)
+            glyph_meta[13] = parseInt(nlist[1], 10)
             break
           case 'VVECTOR':
-            nlist = this.__PATTERN_VVECTOR_DELIMITER.split(value)
-            glyph_meta[14] = parseInt(nlist[0])
-            glyph_meta[15] = parseInt(nlist[1])
+            nlist = __PATTERN_VVECTOR_DELIMITER.split(value)
+            glyph_meta[14] = parseInt(nlist[0], 10)
+            glyph_meta[15] = parseInt(nlist[1], 10)
             break
         }
       } else {
         if (l === 1) {
-          key = kvlist[0].trim()
+          const key = kvlist[0].trim()
           switch (key) {
             case 'BITMAP':
               glyph_bitmap = []
@@ -418,13 +426,11 @@ export class Font {
       }
     }
   }
-  __prepare_glyphs_after() {
+
+  __prepare_glyphs_after(): void {
     const l = this.glyphs.size
     if (this.__glyph_count_to_check !== l) {
-      if (
-        this.__glyph_count_to_check === undefined ||
-        this.__glyph_count_to_check === null
-      ) {
+      if (this.__glyph_count_to_check === null) {
         console.warn("The glyph count next to 'CHARS' keyword does not exist")
       } else {
         console.warn(
@@ -433,7 +439,8 @@ export class Font {
       }
     }
   }
-  get length() {
+
+  get length(): number {
     /*
         Same as `.length()`
         Returns how many glyphs actually exist in the font.
@@ -442,7 +449,11 @@ export class Font {
         */
     return this.glyphs.size
   }
-  itercps(order?, r?) {
+
+  itercps(
+    order?: -1 | 0 | 1 | 2 | null,
+    r?: number | [number, number] | [number, number][] | null
+  ): number[] {
     /*
         Almost identical to `.iterglyphs()`, except it returns an `iterator` of glyph codepoints instead of an `iterator` of `Glyph` Objects.
 
@@ -450,52 +461,54 @@ export class Font {
         */
     order = order ?? 1
     r = r ?? null
-    let retiterator
+    let ret: number[]
     const ks = [...this.glyphs.keys()]
-    console.log(order)
     switch (order) {
       case 1:
-        retiterator = ks.sort((a: number, b: number): number => a - b)
+        ret = ks.sort((a: number, b: number): number => a - b)
         break
       case 0:
-        retiterator = ks
+        ret = ks
         break
       case 2:
-        retiterator = ks.sort((a: number, b: number): number => b - a)
+        ret = ks.sort((a: number, b: number): number => b - a)
         break
       case -1:
-        retiterator = ks.reverse()
+        ret = ks.reverse()
         break
     }
     if (r !== null) {
-      const f = (cp) => {
+      const f = (cp: number): boolean => {
         if (typeof r === 'number') {
           return cp < r
+        } else if (
+          Array.isArray(r) &&
+          r.length === 2 &&
+          typeof r[0] === 'number' &&
+          typeof r[1] === 'number'
+        ) {
+          return cp <= r[1] && cp >= r[0]
         } else {
-          if (
-            Array.isArray(r) &&
-            r.length === 2 &&
-            typeof r[0] === 'number' &&
-            typeof r[1] === 'number'
-          ) {
-            return cp <= r[1] && cp >= r[0]
-          } else {
-            if (Array.isArray(r) && Array.isArray(r[0])) {
-              for (const t of r) {
-                if (cp <= t[1] && cp >= t[0]) {
-                  return true
-                }
+          if (Array.isArray(r) && Array.isArray(r[0])) {
+            for (const t of r) {
+              const [t0, t1] = t as [number, number]
+              if (cp <= t1 && cp >= t0) {
+                return true
               }
-              return false
             }
           }
+          return false
         }
       }
-      retiterator = retiterator.filter(f)
+      ret = ret.filter(f)
     }
-    return retiterator
+    return ret
   }
-  *iterglyphs(order?, r?) {
+
+  *iterglyphs(
+    order?: -1 | 0 | 1 | 2 | null,
+    r?: number | [number, number] | [number, number][] | null
+  ): Iterator<Glyph | null> {
     /*
         Returns an iterator of all the glyphs (as `Glyph` Objects) in the font (default) or in the specified codepoint range in the font, sorted by the specified order (or by the ascending codepoint order by default).
 
@@ -507,67 +520,75 @@ export class Font {
       yield this.glyphbycp(cp)
     }
   }
-  glyphbycp(codepoint) {
+
+  glyphbycp(codepoint: number): Glyph | null {
     /*
         Get a glyph (as Glyph Object) by its codepoint.
 
         https://font.tomchen.org/bdfparser_py/font#glyphbycp
         */
-    if (!this.glyphs.has(codepoint)) {
+    const b = this.glyphs.get(codepoint)
+
+    if (b === undefined || b === null) {
       console.warn(
         `Glyph "${String.fromCodePoint(
           codepoint
         )}" (codepoint ${codepoint.toString()}) does not exist in the font. Will return 'null'`
       )
       return null
+    } else {
+      const d: GlyphMeta = {}
+      const a = __META_TITLES
+      a.forEach((val, i) => {
+        const aa = b[i]
+        d[val] = aa
+      })
+      return new Glyph(d, this)
     }
-    const d = {}
-    const a = this.__META_TITLES
-    const b = this.glyphs.get(codepoint)
-    a.forEach((val, i) => {
-      d[val] = b[i]
-    })
-    return new Glyph(d, this)
   }
-  glyph(character) {
+
+  glyph(character: string): Glyph | null {
     /*
         Get a glyph (as `Glyph` Object) by its character.
 
         https://font.tomchen.org/bdfparser_py/font#glyph
         */
-    return this.glyphbycp(character.codePointAt(0))
+    const ret = character.codePointAt(0)
+    return ret === undefined ? null : this.glyphbycp(ret)
   }
-  lacksglyphs(str) {
+
+  lacksglyphs(str: string): null | string[] {
     /*
         Check if there is any missing glyph and gets these glyphs' character.
 
         https://font.tomchen.org/bdfparser_py/font#lacksglyphs
         */
-    let cp
-    const l = []
+    const l: string[] = []
     const len = str.length
     for (let c, i = 0; i < len; i++) {
       c = str[i]
-      cp = c.codePointAt(0)
-      if (!this.glyphs.has(cp)) {
+      const cp = c.codePointAt(0)
+      if (cp === undefined || !this.glyphs.has(cp)) {
         l.push(c)
       }
     }
     return l.length !== 0 ? l : null
   }
+
   drawcps(
-    cps,
-    linelimit?,
-    mode?,
-    direction?,
-    usecurrentglyphspacing?,
-    missing?
-  ) {
+    cps: number[] | null,
+    linelimit?: number | null,
+    mode?: number | null,
+    direction?: string | null,
+    usecurrentglyphspacing?: boolean | null,
+    missing?: Glyph | GlyphMeta | null
+  ): Bitmap {
     /*
     Draw the glyphs of the specified codepoints, to a `Bitmap` object.
 
     https://font.tomchen.org/bdfparser_py/font#drawcps
     */
+
     linelimit = linelimit ?? 512
     mode = mode ?? 1
     direction = direction ?? 'lrtb'
@@ -601,7 +622,7 @@ export class Font {
     const dire_dict = { lr: 1, rl: 2, tb: 0, bt: -1 }
     const dire_glyph_str = dire.slice(0, 2)
     const dire_line_str = dire.slice(2, 4)
-    if (in_es6(dire_glyph_str, dire_dict) && in_es6(dire_line_str, dire_dict)) {
+    if (dire_glyph_str in dire_dict && dire_line_str in dire_dict) {
       dire_glyph = dire_dict[dire_glyph_str]
       dire_line = dire_dict[dire_line_str]
     } else {
@@ -631,10 +652,10 @@ export class Font {
         interglyph_str = 'dwx1'
         interglyph_str2 = 'dwy1'
       }
-      if (in_es6(interglyph_str, this.headers)) {
+      if (interglyph_str in this.headers) {
         interglyph_global = this.headers[interglyph_str]
       } else {
-        if (in_es6(interglyph_str2, this.headers)) {
+        if (interglyph_str2 in this.headers) {
           interglyph_global = this.headers[interglyph_str2]
         } else {
           interglyph_global = null
@@ -665,7 +686,7 @@ export class Font {
         if (cp === undefined) {
           break
         }
-        if (in_es6(cp, this.glyphs)) {
+        if (this.glyphs.has(cp)) {
           glyph = this.glyphbycp(cp)
         } else {
           if (missing) {
@@ -675,7 +696,7 @@ export class Font {
               glyph = new Glyph(missing, this)
             }
           } else {
-            glyph = new Glyph(this.__EMPTY_GLYPH, this)
+            glyph = new Glyph(__EMPTY_GLYPH, this)
           }
         }
         bitmap = glyph.draw()
@@ -723,6 +744,7 @@ export class Font {
 
     return Bitmap.concatall(list_of_bitmap_line_lists, dire_line, align_line)
   }
+
   draw(str, linelimit?, mode?, direction?, usecurrentglyphspacing?, missing?) {
     /*
         Draw (render) the glyphs of the specified words / setences / paragraphs (as a `str`), to a `Bitmap` Object.
@@ -738,6 +760,7 @@ export class Font {
       missing
     )
   }
+
   drawall(order?, r?, linelimit?, mode?, direction?, usecurrentglyphspacing?) {
     /*
         Draw all the glyphs in the font (default) or in the specified codepoint range in the font, sorted by the specified order (or by the ascending codepoint order by default), to a `Bitmap` Object.
@@ -763,6 +786,7 @@ export class Glyph {
     */
   public meta: any
   public font: any
+
   constructor(meta_dict, font) {
     /*
         Initialize a `Glyph` Object. Load a `dict` of meta information and the font the glyph belongs.
@@ -772,6 +796,7 @@ export class Glyph {
     this.meta = meta_dict
     this.font = font
   }
+
   toString() {
     /*
         Gets a human-readable (multi-line) `str` representation of the `Glyph` Object.
@@ -780,6 +805,7 @@ export class Glyph {
         */
     return this.draw().toString()
   }
+
   repr() {
     /*
         Gets a programmer-readable `str` representation of the `Glyph` Object.
@@ -794,6 +820,7 @@ export class Glyph {
       ')'
     )
   }
+
   cp() {
     /*
         Get the codepoint of the glyph.
@@ -802,6 +829,7 @@ export class Glyph {
         */
     return this.meta['codepoint']
   }
+
   chr() {
     /*
         Get the character of the glyph.
@@ -810,6 +838,7 @@ export class Glyph {
         */
     return String.fromCodePoint(this.cp())
   }
+
   draw(mode?, bb?) {
     /*
         Draw the glyph to a `Bitmap` Object.
@@ -841,6 +870,7 @@ export class Glyph {
     }
     return retbitmap
   }
+
   __draw_user_specified(fbb) {
     const bbxoff = this.meta['bbxoff']
     const bbyoff = this.meta['bbyoff']
@@ -848,25 +878,19 @@ export class Glyph {
     const bitmap = this.__draw_bb()
     return bitmap.crop(fbbx, fbby, -bbxoff + fbbxoff, -bbyoff + fbbyoff)
   }
+
   __draw_original() {
     return new Bitmap(
-      function () {
-        const _pj_a = [],
-          _pj_b = this.meta['hexdata']
-        for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-          const h = _pj_b[_pj_c]
-          _pj_a.push(
-            h
-              ? parseInt(h, 16)
-                  .toString(2)
-                  .padStart(h.length * 4, '0')
-              : ''
-          )
-        }
-        return _pj_a
-      }.call(this)
+      this.meta['hexdata'].map((val) =>
+        val
+          ? parseInt(val, 16)
+              .toString(2)
+              .padStart(val.length * 4, '0')
+          : ''
+      )
     )
   }
+
   __draw_bb() {
     const bbw = this.meta['bbw']
     const bbh = this.meta['bbh']
@@ -882,17 +906,10 @@ export class Glyph {
           .toString()})'s bbh, ${bbh.toString()}, does not match its hexdata line count, ${l.toString()}`
       )
     }
-    bitmap.bindata = function () {
-      const _pj_a = [],
-        _pj_b = bindata
-      for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-        const b = _pj_b[_pj_c]
-        _pj_a.push(b.slice(0, bbw))
-      }
-      return _pj_a
-    }.call(this)
+    bitmap.bindata = bindata.map((val) => val.slice(0, bbw))
     return bitmap
   }
+
   __draw_fbb() {
     const fh = this.font.headers
     return this.__draw_user_specified([
@@ -902,6 +919,7 @@ export class Glyph {
       fh['fbbyoff'],
     ])
   }
+
   origin(mode?, fromorigin?, xoff?, yoff?) {
     /*
         Get the relative position (displacement) of the origin from the left bottom corner of the bitmap drawn by the method `.draw()`, or vice versa.
@@ -947,6 +965,7 @@ export class Bitmap {
     https://font.tomchen.org/bdfparser_py/bitmap
     */
   public bindata: string[]
+
   constructor(bin_bitmap_list) {
     /*
         Initialize a `Bitmap` Object. Load binary bitmap data (`list` of `str`s).
@@ -955,6 +974,7 @@ export class Bitmap {
         */
     this.bindata = bin_bitmap_list
   }
+
   toString() {
     /*
         Gets a human-readable (multi-line) `str` representation of the `Bitmap` Object.
@@ -967,6 +987,7 @@ export class Bitmap {
       .replace(/1/g, '#')
       .replace(/2/g, '&')
   }
+
   repr() {
     /*
         Gets a programmer-readable (multi-line) `str` representation of the `Bitmap` Object.
@@ -975,6 +996,7 @@ export class Bitmap {
         */
     return `Bitmap(${JSON.stringify(this.bindata, null, 2)})`
   }
+
   width() {
     /*
         Get the width of the bitmap.
@@ -983,6 +1005,7 @@ export class Bitmap {
         */
     return this.bindata[0].length
   }
+
   height() {
     /*
         Get the height of the bitmap.
@@ -991,23 +1014,16 @@ export class Bitmap {
         */
     return this.bindata.length
   }
+
   clone() {
     /*
         Get a deep copy / clone of the `Bitmap` Object.
 
         https://font.tomchen.org/bdfparser_py/bitmap#clone
         */
-    const bindata = function () {
-      const _pj_a = [],
-        _pj_b = this.bindata
-      for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-        const l = _pj_b[_pj_c]
-        _pj_a.push(l.slice(0))
-      }
-      return _pj_a
-    }.call(this)
-    return new Bitmap(bindata)
+    return new Bitmap([...this.bindata])
   }
+
   static __crop_string(s, start, length) {
     let left, stemp
     stemp = s
@@ -1023,9 +1039,9 @@ export class Bitmap {
     const newstart = start + left
     return stemp.slice(newstart, newstart + length)
   }
+
   static __string_offset_concat(s1, s2, offset?) {
     offset = offset ?? 0
-    let c1, c2
     if (offset === 0) {
       return s1 + s2
     }
@@ -1041,17 +1057,15 @@ export class Bitmap {
       finalstart - s2start,
       finalend - finalstart
     )
-    const r = []
-    for (let i = 0, _pj_a = news1.length; i < _pj_a; i++) {
-      c1 = news1[i]
-      c2 = news2[i]
-      r.push((parseInt(c2) || parseInt(c1)).toString(10))
-    }
-    return r.join('')
+    return news1
+      .split('')
+      .map((val, i) => (parseInt(news2[i], 10) || parseInt(val, 10)).toString())
+      .join('')
   }
+
   static __listofstr_offset_concat(list1, list2, offset?) {
     offset = offset ?? 0
-    let c1, c2, r, s1, s2
+    let s1, s2
     if (offset === 0) {
       return list1.concat(list2)
     }
@@ -1063,7 +1077,7 @@ export class Bitmap {
     const finalstart = Math.min(0, s2start)
     const finalend = Math.max(len1, s2end)
     const retlist: string[] = []
-    for (let i = finalstart, _pj_a = finalend; i < _pj_a; i++) {
+    for (let i = finalstart; i < finalend; i++) {
       if (i < 0 || i >= len1) {
         s1 = '0'.repeat(width)
       } else {
@@ -1074,21 +1088,23 @@ export class Bitmap {
       } else {
         s2 = list2[i - s2start]
       }
-      r = []
-      for (let i = 0, _pj_b = s1.length; i < _pj_b; i++) {
-        c1 = s1[i]
-        c2 = s2[i]
-        r.push((parseInt(c2) || parseInt(c1)).toString())
-      }
-      retlist.push(r.join(''))
+      retlist.push(
+        s1
+          .split('')
+          .map((val, i) =>
+            (parseInt(s2[i], 10) || parseInt(val, 10)).toString()
+          )
+          .join('')
+      )
     }
     return retlist
   }
+
   static __crop_bitmap(bitmap, w, h, xoff, yoff) {
     let bn
     const retlist = []
     const l = bitmap.length
-    for (let n = 0, _pj_a = h; n < _pj_a; n++) {
+    for (let n = 0; n < h; n++) {
       bn = l - yoff - h + n
       if (bn < 0 || bn >= l) {
         retlist.push('0'.repeat(w))
@@ -1098,6 +1114,7 @@ export class Bitmap {
     }
     return retlist
   }
+
   crop(w, h, xoff?, yoff?) {
     /*
         Crop and/or extend the bitmap.
@@ -1109,13 +1126,13 @@ export class Bitmap {
     this.bindata = Bitmap.__crop_bitmap(this.bindata, w, h, xoff, yoff)
     return this
   }
+
   overlay(bitmap) {
     /*
         Overlay another bitmap over the current one.
 
         https://font.tomchen.org/bdfparser_py/bitmap#overlay
         */
-    let c1, c2, la, lb, r
     const bindata_a = this.bindata
     const bindata_b = bitmap.bindata
     if (bindata_a.length !== bindata_b.length) {
@@ -1124,21 +1141,17 @@ export class Bitmap {
     if (bindata_a[0].length !== bindata_b[0].length) {
       console.warn('the bitmaps to overlay have different width')
     }
-    const rl = []
-    for (let li = 0, _pj_a = bindata_a.length; li < _pj_a; li++) {
-      la = bindata_a[li]
-      lb = bindata_b[li]
-      r = []
-      for (let i = 0, _pj_b = la.length; i < _pj_b; i++) {
-        c1 = la[i]
-        c2 = lb[i]
-        r.push((parseInt(c2) || parseInt(c1)).toString())
-      }
-      rl.push(r.join(''))
-    }
-    this.bindata = rl
+    this.bindata = bindata_a.map((val, li) => {
+      const la = val
+      const lb = bindata_b[li]
+      return la
+        .split('')
+        .map((val, i) => (parseInt(lb[i], 10) || parseInt(val, 10)).toString())
+        .join('')
+    })
     return this
   }
+
   static concatall(bitmaplist, direction?, align?, offsetlist?) {
     /*
         Concatenate all `Bitmap` Objects in a `list`.
@@ -1150,17 +1163,7 @@ export class Bitmap {
     offsetlist = offsetlist ?? null
     let bd, ireal, maxsize, offset, ret: string[], w, xoff
     if (direction > 0) {
-      maxsize = Math.max(
-        ...function () {
-          const _pj_a = [],
-            _pj_b = bitmaplist
-          for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-            const bitmap = _pj_b[_pj_c]
-            _pj_a.push(bitmap.height())
-          }
-          return _pj_a
-        }.call(this)
-      )
+      maxsize = Math.max(...bitmaplist.map((val) => val.height()))
       ret = Array(maxsize).fill('')
       const stroffconcat = (s1, s2, offset) => {
         if (direction === 1) {
@@ -1171,14 +1174,15 @@ export class Bitmap {
           }
         }
       }
-      for (let i = 0, _pj_a = maxsize; i < _pj_a; i++) {
+      for (let i = 0; i < maxsize; i++) {
         if (align) {
           ireal = -i - 1
         } else {
           ireal = i
         }
         offset = 0
-        for (let bi = 0, _pj_b = bitmaplist.length; bi < _pj_b; bi++) {
+        const bl = bitmaplist.length
+        for (let bi = 0; bi < bl; bi++) {
           const bitmap = bitmaplist[bi]
           if (offsetlist && bi !== 0) {
             offset = offsetlist[bi - 1]
@@ -1215,20 +1219,11 @@ export class Bitmap {
         }
       }
     } else {
-      maxsize = Math.max(
-        ...function () {
-          const _pj_a = [],
-            _pj_b = bitmaplist
-          for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-            const bitmap = _pj_b[_pj_c]
-            _pj_a.push(bitmap.width())
-          }
-          return _pj_a
-        }.call(this)
-      )
+      maxsize = Math.max(...bitmaplist.map((val) => val.width()))
       ret = []
       offset = 0
-      for (let bi = 0, _pj_a = bitmaplist.length; bi < _pj_a; bi++) {
+      const bl = bitmaplist.length
+      for (let bi = 0; bi < bl; bi++) {
         const bitmap = bitmaplist[bi]
         if (offsetlist && bi !== 0) {
           offset = offsetlist[bi - 1]
@@ -1252,6 +1247,7 @@ export class Bitmap {
     }
     return new this(ret)
   }
+
   concat(bitmap, direction?, align?, offsetlist?) {
     /*
         Concatenate another `Bitmap` Objects to the current one.
@@ -1266,6 +1262,7 @@ export class Bitmap {
     ).bindata
     return this
   }
+
   static __enlarge_bindata(bindata, x?, y?) {
     x = x ?? 1
     y = y ?? 1
@@ -1288,6 +1285,7 @@ export class Bitmap {
     }
     return ret
   }
+
   enlarge(x?, y?) {
     /*
         Enlarge a `Bitmap` Object, by multiplying every pixel in x (right) direction and in y (top) direction.
@@ -1297,6 +1295,7 @@ export class Bitmap {
     this.bindata = Bitmap.__enlarge_bindata(this.bindata, x, y)
     return this
   }
+
   replace(substr, newsubstr) {
     /*
         Replace a string by another in the bitmap.
@@ -1309,17 +1308,19 @@ export class Bitmap {
     if (typeof newsubstr === 'number') {
       newsubstr = newsubstr.toString()
     }
-    this.bindata = function () {
-      const _pj_a = [],
-        _pj_b = this.bindata
-      for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-        const l = _pj_b[_pj_c]
-        _pj_a.push(replaceAll(l, substr, newsubstr))
+    const replaceAll = (str, substr, newsubstr) => {
+      if ('replaceAll' in String.prototype) {
+        return str.replaceAll(substr, newsubstr)
+      } else {
+        const escapeRegExp = (string) =>
+          string.replace(/[.*+\-?^${}()|[\]\\]/g, '\\$&')
+        return str.replace(new RegExp(escapeRegExp(substr), 'g'), newsubstr)
       }
-      return _pj_a
-    }.call(this)
+    }
+    this.bindata = this.bindata.map((val) => replaceAll(val, substr, newsubstr))
     return this
   }
+
   shadow(xoff?, yoff?) {
     /*
         Add shadow to the shape in the bitmap.
@@ -1336,15 +1337,9 @@ export class Bitmap {
     h = this.height()
     w += Math.abs(xoff)
     h += Math.abs(yoff)
-    bitmap_shadow.bindata = function () {
-      const _pj_a = [],
-        _pj_b = bitmap_shadow.bindata
-      for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-        const l = _pj_b[_pj_c]
-        _pj_a.push(l.replace(/1/g, '2'))
-      }
-      return _pj_a
-    }.call(this)
+    bitmap_shadow.bindata = bitmap_shadow.bindata.map((val) =>
+      val.replace(/1/g, '2')
+    )
     if (xoff > 0) {
       resized_xoff = 0
       shadow_xoff = -xoff
@@ -1365,6 +1360,7 @@ export class Bitmap {
     this.bindata = bitmap_shadow.bindata
     return this
   }
+
   glow() {
     /*
         Add glow effect to the shape in the bitmap.
@@ -1394,29 +1390,10 @@ export class Bitmap {
         }
       }
     }
-    this.bindata = function () {
-      const _pj_a = [],
-        _pj_b = b
-      for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-        const l = _pj_b[_pj_c]
-        _pj_a.push(
-          function () {
-            const _pj_e = [],
-              _pj_f = l
-            for (let _pj_g = 0, _pj_h = _pj_f.length; _pj_g < _pj_h; _pj_g++) {
-              const p = _pj_f[_pj_g]
-              _pj_e.push(p.toString())
-            }
-            return _pj_e
-          }
-            .call(this)
-            .join('')
-        )
-      }
-      return _pj_a
-    }.call(this)
+    this.bindata = b.map((l) => l.map((val) => val.toString()).join(''))
     return this
   }
+
   bytepad(bits?) {
     /*
         Pad each line (row) to multiple of 8 (or other numbers) bits/pixels, with `'0'`s.
@@ -1434,6 +1411,7 @@ export class Bitmap {
     }
     return this.crop(w + bits - mod, h)
   }
+
   todata(datatype?) {
     /*
       Get the bitmap's data in the specified type and format.
@@ -1470,129 +1448,4 @@ export class Bitmap {
         })
     }
   }
-  // tobytes(mode = 'RGB', bytesdict = null) {
-  //   /*
-  //       Get the bitmap's data as `bytes` to be used with Pillow library's `Image.frombytes(mode, size, data)`.
-
-  //       https://font.tomchen.org/bdfparser_py/bitmap#tobytes
-  //       */
-  //   let bitcount, bits, mod, octets, padcount, w
-  //   if (mode === '1') {
-  //     if (bytesdict === null) {
-  //       bytesdict = { [0]: 1, [1]: 0, [2]: 0 }
-  //     }
-  //     bits = []
-  //     w = this.width()
-  //     bitcount = 8
-  //     mod = w % bitcount
-  //     padcount = bitcount - mod
-  //     for (
-  //       let l, _pj_c = 0, _pj_a = this.bindata, _pj_b = _pj_a.length;
-  //       _pj_c < _pj_b;
-  //       _pj_c++
-  //     ) {
-  //       l = _pj_a[_pj_c]
-  //       for (
-  //         let p, _pj_f = 0, _pj_d = l, _pj_e = _pj_d.length;
-  //         _pj_f < _pj_e;
-  //         _pj_f++
-  //       ) {
-  //         p = _pj_d[_pj_f]
-  //         bits.push(parseInt(p))
-  //       }
-  //       if (mod !== 0) {
-  //         bits.extend(
-  //           function () {
-  //             const _pj_d = [],
-  //               _pj_e = range(0, padcount)
-  //             for (
-  //               let _pj_f = 0, _pj_g = _pj_e.length;
-  //               _pj_f < _pj_g;
-  //               _pj_f++
-  //             ) {
-  //               const _ = _pj_e[_pj_f]
-  //               _pj_d.push(0)
-  //             }
-  //             return _pj_d
-  //           }.call(this)
-  //         )
-  //       }
-  //     }
-  //     octets = function () {
-  //       const _pj_a = [],
-  //         _pj_b = range(0, bits.length, 8)
-  //       for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-  //         const i = _pj_b[_pj_c]
-  //         _pj_a.push(bits.slice(i, i + 8))
-  //       }
-  //       return _pj_a
-  //     }.call(this)
-  //     const bits2byte = (octet) => {
-  //       let res
-  //       res = 0
-  //       for (
-  //         let bit, _pj_c = 0, _pj_a = octet, _pj_b = _pj_a.length;
-  //         _pj_c < _pj_b;
-  //         _pj_c++
-  //       ) {
-  //         bit = _pj_a[_pj_c]
-  //         res <<= 1
-  //         res |= bytesdict[bit]
-  //       }
-  //       return res
-  //     }
-  //     return bytes(
-  //       function () {
-  //         const _pj_a = [],
-  //           _pj_b = octets
-  //         for (let _pj_c = 0, _pj_d = _pj_b.length; _pj_c < _pj_d; _pj_c++) {
-  //           const octet = _pj_b[_pj_c]
-  //           _pj_a.push(bits2byte(octet))
-  //         }
-  //         return _pj_a
-  //       }.call(this)
-  //     )
-  //   } else {
-  //     // if mode == 'L':
-  //     //     bytesdict = bytesdict or {
-  //     //         0: b'\xff',
-  //     //         1: b'\x00',
-  //     //         2: b'\x7f',
-  //     //     }
-  //     // elif mode == 'RGBA':
-  //     //     bytesdict = bytesdict or {
-  //     //         0: b'\xff\xff\xff\x00',
-  //     //         1: b'\x00\x00\x00\xff',
-  //     //         2: b'\xff\x00\x00\xff',
-  //     //     }
-  //     // else:
-  //     //     if mode != 'RGB':
-  //     //         console.warn("Unknown mode, fallback to RGB")
-  //     //     bytesdict = bytesdict or {
-  //     //         0: b'\xff\xff\xff',
-  //     //         1: b'\x00\x00\x00',
-  //     //         2: b'\xff\x00\x00',
-  //     //     }
-  //     // retbytes = b''
-
-  //     for (
-  //       let l, _pj_c = 0, _pj_a = this.bindata, _pj_b = _pj_a.length;
-  //       _pj_c < _pj_b;
-  //       _pj_c++
-  //     ) {
-  //       l = _pj_a[_pj_c]
-  //       for (
-  //         let p, _pj_f = 0, _pj_d = l, _pj_e = _pj_d.length;
-  //         _pj_f < _pj_e;
-  //         _pj_f++
-  //       ) {
-  //         p = _pj_d[_pj_f]
-  //         retbytes += bytesdict[parseInt(p)]
-  //       }
-  //     }
-  //     return retbytes
-  //   }
-  // }
 }
-
-// ctx.fillRect(10,10,1,1);

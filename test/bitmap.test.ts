@@ -1,4 +1,5 @@
 import { Font, Bitmap } from '../src/index'
+import filelines from '../src/filelines'
 import { specfont_path, bitmap_qr2_bindata, bitmap_qr3_bindata } from './info'
 
 describe('Bitmap', () => {
@@ -8,7 +9,7 @@ describe('Bitmap', () => {
 
   beforeEach(async () => {
     font = new Font()
-    await font.load_file_path(specfont_path)
+    await font.load_filelines(filelines(specfont_path))
     bitmap_qr = font.glyph("'").draw(2)
     bitmap_qr2 = new Bitmap(bitmap_qr2_bindata)
     return
@@ -599,7 +600,6 @@ describe('Bitmap', () => {
     })
 
     test('repr', () => {
-      console.log(bitmap_qr.repr())
       expect(bitmap_qr.repr()).toEqual(`Bitmap([
   "01110000",
   "01110000",

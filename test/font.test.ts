@@ -1,5 +1,5 @@
 import { Font, Glyph } from '../src/index'
-import { fileLineIter } from '../src/bdfparser'
+import filelines from '../src/filelines'
 import { unifont_path, glyph_a_meta, missing_glyph_meta } from './info'
 
 describe('Font loading', () => {
@@ -9,13 +9,9 @@ describe('Font loading', () => {
     font = new Font()
   })
 
-  test('load_file_path', async () => {
-    expect(await font.load_file_path(unifont_path)).toBeInstanceOf(Font)
-  })
-
-  test('load_file_line_iter', async () => {
-    const lineIter = fileLineIter(unifont_path)
-    expect(await font.load_file_line_iter(lineIter)).toBeInstanceOf(Font)
+  test('load_filelines', async () => {
+    const lineIter = filelines(unifont_path)
+    expect(await font.load_filelines(lineIter)).toBeInstanceOf(Font)
   })
 })
 
@@ -24,7 +20,7 @@ describe('Font', () => {
 
   beforeEach(() => {
     font = new Font()
-    return font.load_file_path(unifont_path)
+    return font.load_filelines(filelines(unifont_path))
   })
 
   describe('basic', () => {

@@ -1,4 +1,5 @@
 import { Font, Glyph } from '../src/index'
+import filelines from '../src/filelines'
 import {
   unifont_path,
   glyph_a_meta,
@@ -12,7 +13,7 @@ describe('Glyph', () => {
 
   beforeEach(async () => {
     font = new Font()
-    await font.load_file_path(unifont_path)
+    await font.load_filelines(filelines(unifont_path))
     glyph_a = new Glyph(glyph_a_meta, font)
     return
   })
@@ -138,7 +139,7 @@ describe('Glyph draw spec quoteright', () => {
 
   beforeEach(async () => {
     font = new Font()
-    await font.load_file_path(specfont_path)
+    await font.load_filelines(filelines(specfont_path))
     glyph_qr = font.glyph("'")
     return
   })
@@ -234,7 +235,7 @@ describe('Glyph draw spec j', () => {
 
   beforeEach(async () => {
     font = new Font()
-    await font.load_file_path(specfont_path)
+    await font.load_filelines(filelines(specfont_path))
     glyph_j = font.glyph('j')
     return
   })

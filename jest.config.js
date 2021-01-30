@@ -9,7 +9,12 @@ module.exports = {
   },
   globals: {
     'ts-jest': {
-      tsconfig: 'tsconfig.json'
-    }
-  }
+      tsconfig: 'tsconfig.json',
+      isolatedModules: true,
+      diagnostics: {
+        warnOnly: true,
+      },
+    },
+  },
+  verbose: true,
 }

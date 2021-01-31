@@ -11,9 +11,6 @@ module.exports = {
     'ts-jest': {
       tsconfig: 'tsconfig.json',
       isolatedModules: true,
-      diagnostics: {
-        warnOnly: true,
-      },
     },
   },
   verbose: true,

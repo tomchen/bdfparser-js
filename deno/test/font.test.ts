@@ -1,34 +1,38 @@
-import { Font, Glyph } from '../src/index'
-import filelines from '../src/filelines'
-import { unifont_path, glyph_a_meta, missing_glyph_meta } from './info'
+import { Font, Glyph } from '../mod.ts'
+import filelines from '../filelines.ts'
+import { unifont_path, glyph_a_meta, missing_glyph_meta } from './info.ts'
+import { expect, test, describe } from './jest_to_deno.ts'
 
 describe('Font loading', () => {
-  let font
+  let font: Font
 
-  beforeEach(() => {
+  const beforeEach = () => {
     font = new Font()
-  })
+  }
 
   test('load_filelines', async () => {
+    await beforeEach()
     const lineIter = filelines(unifont_path)
     expect(await font.load_filelines(lineIter)).toBeInstanceOf(Font)
   })
 })
 
 describe('Font', () => {
-  let font
+  let font: Font
 
-  beforeEach(() => {
+  const beforeEach = () => {
     font = new Font()
     return font.load_filelines(filelines(unifont_path))
-  })
+  }
 
   describe('basic', () => {
-    test('init', () => {
+    test('init', async () => {
+      await beforeEach()
       expect(font).toBeInstanceOf(Font)
     })
 
-    test('headers', () => {
+    test('headers', async () => {
+      await beforeEach()
       expect(font.headers).toEqual({
         bdfversion: 2.1,
         fontname:
@@ -48,7 +52,8 @@ describe('Font', () => {
       })
     })
 
-    test('props', () => {
+    test('props', async () => {
+      await beforeEach()
       expect(font.props).toEqual({
         add_style_name: 'Sans Serif',
         average_width: '80',
@@ -78,7 +83,8 @@ describe('Font', () => {
       })
     })
 
-    test('glyphs_a', () => {
+    test('glyphs_a', async () => {
+      await beforeEach()
       // prettier-ignore
       expect(font.glyphs.get(97)).toEqual([
         'U+0061', 97, 8, 16, 0, -2, 500, 0, 8, 0,
@@ -87,37 +93,45 @@ describe('Font', () => {
       ])
     })
 
-    test('glyphs_len', () => {
+    test('glyphs_len', async () => {
+      await beforeEach()
       expect(font.glyphs.size).toEqual(font.length)
     })
 
-    test('length', () => {
+    test('length', async () => {
+      await beforeEach()
       expect(font.length).toBe(849)
     })
   })
 
   describe('iter', () => {
-    test('itercps_list_len', () => {
+    test('itercps_list_len', async () => {
+      await beforeEach()
       expect(font.itercps().length).toEqual(font.length)
     })
 
-    test('itercps_cp_first', () => {
+    test('itercps_cp_first', async () => {
+      await beforeEach()
       expect(font.itercps()[0]).toEqual(0)
     })
 
-    test('itercps_cp_reversed_first', () => {
+    test('itercps_cp_reversed_first', async () => {
+      await beforeEach()
       expect(font.itercps(2)[0]).toEqual(30340)
     })
 
-    test('itercps_file_first', () => {
+    test('itercps_file_first', async () => {
+      await beforeEach()
       expect(font.itercps(0)[0]).toEqual(1)
     })
 
-    test('itercps_file_reversed_first', () => {
+    test('itercps_file_reversed_first', async () => {
+      await beforeEach()
       expect(font.itercps(-1)[0]).toEqual(1790)
     })
 
-    test('itercps_range', () => {
+    test('itercps_range', async () => {
+      await beforeEach()
       const r128 = font.itercps(null, 128)
       const r0x100 = font.itercps(null, 0x100)
       expect(r128.length).toEqual(128)
@@ -126,7 +140,8 @@ describe('Font', () => {
       expect(font.itercps(null, [0, 0xff])).toEqual(r0x100)
     })
 
-    test('itercps_range2', () => {
+    test('itercps_range2', async () => {
+      await beforeEach()
       const r_numbers = font.itercps(null, [48, 57])
       const r_reversed_uppers = font.itercps(2, [65, 90])
       const r_letters_with_nonexistent_range = font.itercps(null, [
@@ -142,11 +157,13 @@ describe('Font', () => {
       expect(r_letters_with_nonexistent_range).toEqual([65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122])
     })
 
-    test('iterglyphs_list_len', () => {
+    test('iterglyphs_list_len', async () => {
+      await beforeEach()
       expect([...font.iterglyphs()].length).toEqual(font.length)
     })
 
-    test('iterglyphs_cp_first', () => {
+    test('iterglyphs_cp_first', async () => {
+      await beforeEach()
       const first_cp_glyph = font.iterglyphs().next().value
       expect(first_cp_glyph).toBeInstanceOf(Glyph)
       expect(first_cp_glyph.meta['glyphname']).toEqual('U+0000')
@@ -154,33 +171,40 @@ describe('Font', () => {
   })
 
   describe('get glyph', () => {
-    test('glyphbycp_a', () => {
-      expect(font.glyphbycp(97).meta).toEqual(glyph_a_meta)
+    test('glyphbycp_a', async () => {
+      await beforeEach()
+      expect(font.glyphbycp(97)?.meta).toEqual(glyph_a_meta)
     })
 
-    test('glyph_a', () => {
-      expect(font.glyph('a').meta).toEqual(glyph_a_meta)
+    test('glyph_a', async () => {
+      await beforeEach()
+      expect(font.glyph('a')?.meta).toEqual(glyph_a_meta)
     })
 
-    test('glyphbycp_nonexistent', () => {
+    test('glyphbycp_nonexistent', async () => {
+      await beforeEach()
       expect(font.glyphbycp(22909)).toEqual(null)
     })
 
-    test('glyph_nonexistent', () => {
+    test('glyph_nonexistent', async () => {
+      await beforeEach()
       expect(font.glyph('好')).toEqual(null)
     })
 
-    test('lacksglyphs', () => {
+    test('lacksglyphs', async () => {
+      await beforeEach()
       expect(font.lacksglyphs('Bé H好Δi的')).toEqual(['好', 'Δ'])
     })
 
-    test('lacksglyphs_none', () => {
+    test('lacksglyphs_none', async () => {
+      await beforeEach()
       expect(font.lacksglyphs('Bé Hi的')).toEqual(null)
     })
   })
 
   describe('draw', () => {
-    test('drawcps', () => {
+    test('drawcps', async () => {
+      await beforeEach()
       expect(font.drawcps([66, 100, 102, 32, 72, 105]).bindata).toEqual([
         '00000000000000000000000000000000000000000000000000000000',
         '00000000000000000000000000000000000000000000000000000000',
@@ -201,7 +225,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_default', () => {
+    test('draw_default', async () => {
+      await beforeEach()
       expect(font.draw('Bdf Hi').bindata).toEqual([
         '00000000000000000000000000000000000000000000000000000000',
         '00000000000000000000000000000000000000000000000000000000',
@@ -222,7 +247,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_mode0', () => {
+    test('draw_mode0', async () => {
+      await beforeEach()
       expect(font.draw('Bdf Hi', { mode: 0 }).bindata).toEqual([
         '000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
         '000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
@@ -243,7 +269,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_rl', () => {
+    test('draw_rl', async () => {
+      await beforeEach()
       expect(font.draw('مرحبا', { direction: 'rl' }).bindata).toEqual([
         '000000000000000000000000000000000000000000000000',
         '000000000000000000000000000000000000000000000000',
@@ -264,7 +291,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_lrbt_linelimit30', () => {
+    test('draw_lrbt_linelimit30', async () => {
+      await beforeEach()
       expect(
         font.draw('Bdf Hi', { linelimit: 30, direction: 'lrbt' }).bindata
       ).toEqual([
@@ -303,7 +331,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_tbrl_linelimit40', () => {
+    test('draw_tbrl_linelimit40', async () => {
+      await beforeEach()
       expect(
         font.draw('Bdf Hi', { linelimit: 40, direction: 'tbrl' }).bindata
       ).toEqual([
@@ -342,7 +371,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_rl_without_ucgs', () => {
+    test('draw_rl_without_ucgs', async () => {
+      await beforeEach()
       expect(font.draw('a的', { direction: 'rl' }).bindata).toEqual([
         '000100000100000000000000',
         '000100000100000000000000',
@@ -363,7 +393,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_rl_with_ucgs', () => {
+    test('draw_rl_with_ucgs', async () => {
+      await beforeEach()
       expect(
         font.draw('a的', { direction: 'rl', usecurrentglyphspacing: true })
           .bindata
@@ -387,7 +418,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_btlr_linelimit40', () => {
+    test('draw_btlr_linelimit40', async () => {
+      await beforeEach()
       expect(
         font.draw('Bdf的 Hi', { linelimit: 40, direction: 'btlr' }).bindata
       ).toEqual([
@@ -426,7 +458,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_nonexistent_default', () => {
+    test('draw_nonexistent_default', async () => {
+      await beforeEach()
       expect(font.draw('Bé H好Δi的').bindata).toEqual([
         '00000000000000000000000000000000000000000001000001000000',
         '00000000000000000000000000000000000000000001000001000000',
@@ -447,7 +480,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_nonexistent_mode0_linelimit80', () => {
+    test('draw_nonexistent_mode0_linelimit80', async () => {
+      await beforeEach()
       expect(
         font.draw('Bé H好Δi的', { linelimit: 80, mode: 0 }).bindata
       ).toEqual([
@@ -486,7 +520,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_nonexistent_tb_linelimit40', () => {
+    test('draw_nonexistent_tb_linelimit40', async () => {
+      await beforeEach()
       expect(
         font.draw('Bé H好Δi的', { linelimit: 40, direction: 'tb' }).bindata
       ).toEqual([
@@ -541,7 +576,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_nonexistent_default_withmissingglyphobj', () => {
+    test('draw_nonexistent_default_withmissingglyphobj', async () => {
+      await beforeEach()
       expect(
         font.draw('Bé H好Δi的', {
           missing: new Glyph(missing_glyph_meta, font),
@@ -566,7 +602,8 @@ describe('Font', () => {
       ])
     })
 
-    test('draw_nonexistent_default_withmissingglyphmeta', () => {
+    test('draw_nonexistent_default_withmissingglyphmeta', async () => {
+      await beforeEach()
       expect(
         font.draw('Bé H好Δi的', { missing: missing_glyph_meta }).bindata
       ).toEqual([
@@ -589,7 +626,8 @@ describe('Font', () => {
       ])
     })
 
-    test('drawall', () => {
+    test('drawall', async () => {
+      await beforeEach()
       const drawall_bitmap_bindata = font.drawall({ linelimit: 700 }).bindata
       expect(drawall_bitmap_bindata[0].length).toEqual(688)
       expect(drawall_bitmap_bindata.length).toEqual(320)

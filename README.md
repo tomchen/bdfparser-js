@@ -1,3 +1,8 @@
-# BDF Parser
+# BDF Parser TypeScript (JavaScript) library
 
-BDF (Glyph Bitmap Distribution Format) Bitmap Font File Parser Library in JavaScript (TypeScript)
+BDF (Glyph Bitmap Distribution; [Wikipedia](https://en.wikipedia.org/wiki/Glyph_Bitmap_Distribution_Format); [Spec](https://font.tomchen.org/bdf_spec/)) format bitmap font file parser library in TypeScript (JavaScript). It has [`Font`](https://font.tomchen.org/bdfparser_js/font/), [`Glyph`](https://font.tomchen.org/bdfparser_js/glyph/) and [`Bitmap`](https://font.tomchen.org/bdfparser_js/bitmap/) classes providing more than 30 enriched, chainable API methods of parsing BDF fonts, getting their meta information, rendering text in any writing direction, adding special effects and manipulating bitmap images. It works in Node.js, in browsers (so you can use HTML Canvas) and in Deno, and has detailed documentation / tutorials / API reference.
+
+**BDF Parser TypeScript (JavaScript) library** ([documentation](https://font.tomchen.org/bdfparser_js/); [GitHub page](https://github.com/tomchen/bdfparser-js); [npm page](https://www.npmjs.com/package/bdfparser); `npm i bdfparser`) is a port of **BDF Parser Python library** ([documentation](https://font.tomchen.org/bdfparser_py/); [GitHub page](https://github.com/tomchen/bdfparser); [PyPI page](https://pypi.org/project/bdfparser/); `pip install bdfparser`). Both are written by [Tom Chen](https://github.com/tomchen/) and under the MIT License.
+
+Below I'll show you some quick examples, but it is still strongly recommended you go to [**BDF Parser TypeScript (JavaScript) library's official website to read the detailed documentation / tutorials / API reference**](https://font.tomchen.org/bdfparser_js/).
+

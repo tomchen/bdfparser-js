@@ -1,4 +1,4 @@
-type Headers = {
+export type Headers = {
   bdfversion: number
   fontname: string
   pointsize: number
@@ -24,9 +24,9 @@ type Headers = {
 }
 type HeadersTemp = Partial<Headers>
 
-type Props = Record<string, string | null> & { comment?: string[] }
+export type Props = Record<string, string | null> & { comment?: string[] }
 
-type GlyphMetaInFont = [
+export type GlyphMetaInFont = [
   string, // glyphname
   number, // codepoint
   number, // bbw
@@ -66,7 +66,7 @@ type GlyphMetaInFontTemp = [
   string[] | null
 ]
 
-type GlyphMeta = {
+export type GlyphMeta = {
   glyphname: GlyphMetaInFont[0]
   codepoint: GlyphMetaInFont[1]
   bbw: GlyphMetaInFont[2]
@@ -87,7 +87,7 @@ type GlyphMeta = {
 }
 type GlyphMetaTemp = Partial<GlyphMeta>
 
-type TodataFuncRetType<T> = T extends undefined
+export type TodataFuncRetType<T> = T extends undefined
   ? string[]
   : T extends 0
   ? string
@@ -103,9 +103,12 @@ type TodataFuncRetType<T> = T extends undefined
   ? number[]
   : never
 
-type CodepointRangeType = number | [number, number] | [number, number][]
-type OrderType = -1 | 0 | 1 | 2
-type GlyphDrawModeType = -1 | 0 | 1 | 2
+export type CodepointRangeType = number | [number, number] | [number, number][]
+export type OrderType = -1 | 0 | 1 | 2
+export type GlyphDrawModeType = -1 | 0 | 1 | 2
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type CanvasContext = { fillStyle: any; fillRect: any } // Can't use CanvasRenderingContext2D in Deno for now
 
 const setProperty = <O extends Record<PropertyKey, unknown>, K extends keyof O>(
   obj: O,
@@ -163,21 +166,25 @@ const DIRE_SHORTCUT_MAP = {
   tb: 'tbrl',
   bt: 'btrl',
   lrtb: undefined,
+  lrbt: undefined,
   rltb: undefined,
+  rlbt: undefined,
   tbrl: undefined,
+  tblr: undefined,
   btrl: undefined,
+  btlr: undefined,
 } as const
 
 const DIRE_MAP = { lr: 1, rl: 2, tb: 0, bt: -1 } as const
 
-type DirectionType = keyof typeof DIRE_SHORTCUT_MAP
+export type DirectionType = keyof typeof DIRE_SHORTCUT_MAP
 type DirectionPartType = keyof typeof DIRE_MAP
-type DirectionNumberType = typeof DIRE_MAP[keyof typeof DIRE_MAP]
+export type DirectionNumberType = typeof DIRE_MAP[keyof typeof DIRE_MAP]
 
 /**
- * `Font` Object
+ * `Font` object
  *
- * @see {@link https://font.tomchen.org/bdfparser_py/font}
+ * @see {@link http://localhost:3000/bdfparser_js/font}
  */
 export class Font {
   public headers: Headers | undefined = undefined
@@ -187,20 +194,34 @@ export class Font {
   private __glyph_count_to_check: number | null = null
   private __curline_startchar: string | null = null
   private __curline_chars: string | null = null
-  private __f?: AsyncIterator<string>
+  private __f?: AsyncIterableIterator<string>
 
   /**
    * Load the BDF font file line async iterator.
    *
-   * @param filelines - Asynchronous iterator representing each line in string text from the file
+   * @param filelines - Asynchronous iterator representing each line in string text from the font file
    *
-   * @returns The current `Font` Object
+   * @returns The current `Font` object
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/load_filelines}
+   * @see {@link http://localhost:3000/bdfparser_js/load_filelines}
    */
-  async load_filelines(filelines: AsyncIterator<string>): Promise<this> {
-    this.__f = filelines
-    await this.__parse_headers()
+  async load_filelines(
+    filelines: AsyncIterableIterator<string>
+  ): Promise<this> {
+    try {
+      this.__f = filelines
+      await this.__parse_headers()
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      if (typeof Deno !== 'undefined') {
+        // Deno needs to run to the end and close the file
+        if (this.__f !== undefined) {
+          for await (const _ of this.__f) {
+          }
+        }
+      }
+    }
     return this
   }
 
@@ -503,21 +524,21 @@ export class Font {
    *
    * @returns Actual glyph count in the font
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/font#length}
+   * @see {@link http://localhost:3000/bdfparser_js/font#length}
    */
   get length(): number {
     return this.glyphs.size
   }
 
   /**
-   * Similar to `.iterglyphs()`, except it returns an `array` of glyph codepoints instead of an `iterator` of `Glyph` Objects.
+   * Similar to `.iterglyphs()`, except it returns an `array` of glyph codepoints instead of an `iterator` of `Glyph` objects.
    *
    * @param order  - Order
    * @param r  - Codepoint range
    *
    * @returns An iterator of the codepoints of glyphs
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/font#itercps}
+   * @see {@link http://localhost:3000/bdfparser_js/font#itercps}
    */
   itercps(
     order?: OrderType | null,
@@ -570,19 +591,19 @@ export class Font {
   }
 
   /**
-   * Returns an iterator of all the glyphs (as `Glyph` Objects) in the font (default) or in the specified codepoint range in the font, sorted by the specified order (or by the ascending codepoint order by default).
+   * Returns an iterator of all the glyphs (as `Glyph` objects) in the font (default) or in the specified codepoint range in the font, sorted by the specified order (or by the ascending codepoint order by default).
    *
    * @param order  - Order
    * @param r  - Codepoint range
    *
    * @returns An iterator of glyphs as `Glyph` objects. Missing glyphs are replaced by `null`
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/font#iterglyphs}
+   * @see {@link http://localhost:3000/bdfparser_js/font#iterglyphs}
    */
   *iterglyphs(
     order?: OrderType | null,
     r?: CodepointRangeType | null
-  ): Iterator<Glyph | null> {
+  ): IterableIterator<Glyph | null> {
     for (const cp of this.itercps(order, r)) {
       yield this.glyphbycp(cp)
     }
@@ -595,7 +616,7 @@ export class Font {
    *
    * @returns `Glyph` object, or `null` if the glyph does not exist in the font
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/font#glyphbycp}
+   * @see {@link http://localhost:3000/bdfparser_js/font#glyphbycp}
    */
   glyphbycp(codepoint: number): Glyph | null {
     const b = this.glyphs.get(codepoint)
@@ -617,13 +638,13 @@ export class Font {
   }
 
   /**
-   * Get a glyph (as `Glyph` Object) by its character.
+   * Get a glyph (as `Glyph` object) by its character.
    *
    * @param character - Character
    *
    * @returns `Glyph` object, or `null` if the glyph does not exist in the font
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/font#glyph}
+   * @see {@link http://localhost:3000/bdfparser_js/font#glyph}
    */
   glyph(character: string): Glyph | null {
     const ret = character.codePointAt(0)
@@ -637,7 +658,7 @@ export class Font {
    *
    * @returns List of missing glyph(s)' characters, or `null` if all the glyphs in your string exist in the font
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/font#lacksglyphs}
+   * @see {@link http://localhost:3000/bdfparser_js/font#lacksglyphs}
    */
   lacksglyphs(str: string): null | string[] {
     const l: string[] = []
@@ -664,21 +685,23 @@ export class Font {
    *
    * @returns `Bitmap` object
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/font#drawcps}
+   * @see {@link http://localhost:3000/bdfparser_js/font#drawcps}
    */
   drawcps(
     cps: number[],
-    linelimit?: number | null,
-    mode?: 0 | 1 | null,
-    direction?: DirectionType | null,
-    usecurrentglyphspacing?: boolean | null,
-    missing?: Glyph | GlyphMeta | null
+    options: {
+      linelimit?: number | null
+      mode?: 0 | 1 | null
+      direction?: DirectionType | null
+      usecurrentglyphspacing?: boolean | null
+      missing?: Glyph | GlyphMeta | null
+    } = {}
   ): Bitmap {
-    const _linelimit = linelimit ?? 512
-    const _mode = mode ?? 1
-    const _direction = direction ?? 'lrtb'
-    const _usecurrentglyphspacing = usecurrentglyphspacing ?? false
-    const _missing = missing ?? null
+    const _linelimit = options.linelimit ?? 512
+    const _mode = options.mode ?? 1
+    const _direction = options.direction ?? 'lrtb'
+    const _usecurrentglyphspacing = options.usecurrentglyphspacing ?? false
+    const _missing = options.missing ?? null
     if (this.headers === undefined) {
       throw new Error('Font is not loaded')
     }
@@ -832,19 +855,21 @@ export class Font {
     }
 
     const list_of_bitmap_line_lists = list_of_bitmaplist.map((bitmaplist, i) =>
-      Bitmap.concatall(
-        bitmaplist,
-        dire_glyph,
-        align_glyph,
-        list_of_offsetlist[i]
-      )
+      Bitmap.concatall(bitmaplist, {
+        direction: dire_glyph,
+        align: align_glyph,
+        offsetlist: list_of_offsetlist[i],
+      })
     )
 
-    return Bitmap.concatall(list_of_bitmap_line_lists, dire_line, align_line)
+    return Bitmap.concatall(list_of_bitmap_line_lists, {
+      direction: dire_line,
+      align: align_line,
+    })
   }
 
   /**
-   * Draw (render) the glyphs of the specified words / setences / paragraphs (as a `string`), to a `Bitmap` Object.
+   * Draw (render) the glyphs of the specified words / setences / paragraphs (as a `string`), to a `Bitmap` object.
    *
    * @param str - String to draw
    * @param linelimit - Maximum pixels per line
@@ -855,16 +880,25 @@ export class Font {
    *
    * @returns `Bitmap` object
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/font#draw}
+   * @see {@link http://localhost:3000/bdfparser_js/font#draw}
    */
   draw(
     str: string,
-    linelimit?: number | null,
-    mode?: 0 | 1 | null,
-    direction?: DirectionType | null,
-    usecurrentglyphspacing?: boolean | null,
-    missing?: Glyph | GlyphMeta | null
+    options: {
+      linelimit?: number | null
+      mode?: 0 | 1 | null
+      direction?: DirectionType | null
+      usecurrentglyphspacing?: boolean | null
+      missing?: Glyph | GlyphMeta | null
+    } = {}
   ): Bitmap {
+    const {
+      linelimit,
+      mode,
+      direction,
+      usecurrentglyphspacing,
+      missing,
+    } = options
     return this.drawcps(
       str.split('').map((c) => {
         const cp = c.codePointAt(0)
@@ -874,16 +908,18 @@ export class Font {
           return cp
         }
       }),
-      linelimit,
-      mode,
-      direction,
-      usecurrentglyphspacing,
-      missing
+      {
+        linelimit,
+        mode,
+        direction,
+        usecurrentglyphspacing,
+        missing,
+      }
     )
   }
 
   /**
-   * Draw all the glyphs in the font (default) or in the specified codepoint range in the font, sorted by the specified order (or by the ascending codepoint order by default), to a `Bitmap` Object.
+   * Draw all the glyphs in the font (default) or in the specified codepoint range in the font, sorted by the specified order (or by the ascending codepoint order by default), to a `Bitmap` object.
    *
    * @param order - Order
    * @param r - Codepoint range
@@ -894,43 +930,52 @@ export class Font {
    *
    * @returns `Bitmap` object
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/font#drawall}
+   * @see {@link http://localhost:3000/bdfparser_js/font#drawall}
    */
   drawall(
-    order?: OrderType,
-    r?: CodepointRangeType,
-    linelimit?: number | null,
-    mode?: 0 | 1 | null,
-    direction?: DirectionType | null,
-    usecurrentglyphspacing?: boolean | null
+    options: {
+      order?: OrderType
+      r?: CodepointRangeType
+      linelimit?: number | null
+      mode?: 0 | 1 | null
+      direction?: DirectionType | null
+      usecurrentglyphspacing?: boolean | null
+    } = {}
   ): Bitmap {
-    const _mode = mode ?? 0
-    return this.drawcps(
-      this.itercps(order, r),
+    const {
+      order,
+      r,
       linelimit,
-      _mode,
+      mode,
       direction,
-      usecurrentglyphspacing
-    )
+      usecurrentglyphspacing,
+    } = options
+    const _mode = mode ?? 0
+    return this.drawcps(this.itercps(order, r), {
+      linelimit,
+      mode: _mode,
+      direction,
+      usecurrentglyphspacing,
+    })
   }
 }
 
 /**
- * `Glyph` Object
+ * `Glyph` object
  *
- * @see {@link https://font.tomchen.org/bdfparser_py/glyph#glyph}
+ * @see {@link http://localhost:3000/bdfparser_js/glyph#glyph}
  */
 export class Glyph {
   public meta: GlyphMeta
   public font: Font
 
   /**
-   * `Glyph` Object constructor
+   * `Glyph` object constructor
    *
    * @param meta_obj - Meta information
    * @param font - The font the glyph belongs to
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/glyph#glyph}
+   * @see {@link http://localhost:3000/bdfparser_js/glyph#glyph}
    */
   constructor(meta_obj: GlyphMeta, font: Font) {
     this.meta = meta_obj
@@ -938,22 +983,22 @@ export class Glyph {
   }
 
   /**
-   * Gets a human-readable (multi-line) `string` representation of the `Glyph` Object.
+   * Gets a human-readable (multi-line) `string` representation of the `Glyph` object.
    *
    * @returns String representation
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/glyph#tostring}
+   * @see {@link http://localhost:3000/bdfparser_js/glyph#tostring}
    */
   toString(): string {
     return this.draw().toString()
   }
 
   /**
-   * Gets a programmer-readable `string` representation of the `Glyph` Object.
+   * Gets a programmer-readable `string` representation of the `Glyph` object.
    *
    * @returns String representation
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/glyph#repr}
+   * @see {@link http://localhost:3000/bdfparser_js/glyph#repr}
    */
   repr(): string {
     return (
@@ -970,7 +1015,7 @@ export class Glyph {
    *
    * @returns Codepoint of the glyph
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/glyph#cp}
+   * @see {@link http://localhost:3000/bdfparser_js/glyph#cp}
    */
   cp(): number {
     return this.meta['codepoint']
@@ -981,21 +1026,21 @@ export class Glyph {
    *
    * @returns Character (one character string) of the glyph
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/glyph#chr}
+   * @see {@link http://localhost:3000/bdfparser_js/glyph#chr}
    */
   chr(): string {
     return String.fromCodePoint(this.cp())
   }
 
   /**
-   * Draw the glyph to a `Bitmap` Object.
+   * Draw the glyph to a `Bitmap` object.
    *
    * @param mode - Mode
    * @param bb - Bounding box
    *
    * @returns `Bitmap` object
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/glyph#draw}
+   * @see {@link http://localhost:3000/bdfparser_js/glyph#draw}
    */
   draw(
     mode?: GlyphDrawModeType | null,
@@ -1087,13 +1132,13 @@ export class Glyph {
    *
    * @returns The relative position (displacement) represented by `[x, y]` array / tuple (where right and top directions are positive)
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/glyph#origin}
+   * @see {@link http://localhost:3000/bdfparser_js/glyph#origin}
    */
   origin(
     mode?: GlyphDrawModeType | null,
-    fromorigin?: boolean,
-    xoff?: number,
-    yoff?: number
+    fromorigin?: boolean | null,
+    xoff?: number | null,
+    yoff?: number | null
   ): [number, number] {
     const _mode = mode ?? 0
     const _fromorigin = fromorigin ?? false
@@ -1131,30 +1176,30 @@ export class Glyph {
 }
 
 /**
- * `Bitmap` Object
+ * `Bitmap` object
  *
- * @see {@link https://font.tomchen.org/bdfparser_py/bitmap}
+ * @see {@link http://localhost:3000/bdfparser_js/bitmap}
  */
 export class Bitmap {
   public bindata: string[]
 
   /**
-   * Initialize a `Bitmap` Object. Load binary bitmap data (`list` of `string`s).
+   * Initialize a `Bitmap` object. Load binary bitmap data (`array` of `string`s).
    *
    * @param bin_bitmap_list - Binary bitmap data
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#bitmap}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#bitmap}
    */
   constructor(bin_bitmap_list: string[]) {
     this.bindata = bin_bitmap_list
   }
 
   /**
-   * Gets a human-readable (multi-line) `string` representation of the `Bitmap` Object.
+   * Gets a human-readable (multi-line) `string` representation of the `Bitmap` object.
    *
    * @returns String representation
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#tostring}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#tostring}
    */
   toString(): string {
     return this.bindata
@@ -1165,11 +1210,11 @@ export class Bitmap {
   }
 
   /**
-   * Gets a programmer-readable (multi-line) `string` representation of the `Bitmap` Object.
+   * Gets a programmer-readable (multi-line) `string` representation of the `Bitmap` object.
    *
    * @returns String representation
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#repr}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#repr}
    */
   repr(): string {
     return `Bitmap(${JSON.stringify(this.bindata, null, 2)})`
@@ -1180,7 +1225,7 @@ export class Bitmap {
    *
    * @returns Width of the bitmap
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#width}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#width}
    */
   width(): number {
     return this.bindata[0].length
@@ -1191,18 +1236,18 @@ export class Bitmap {
    *
    * @returns Height of the bitmap
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#height}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#height}
    */
   height(): number {
     return this.bindata.length
   }
 
   /**
-   * Get a deep copy / clone of the `Bitmap` Object.
+   * Get a deep copy / clone of the `Bitmap` object.
    *
    * @returns A deep copy of the original `Bitmap` object
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#clone}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#clone}
    */
   clone(): Bitmap {
     return new Bitmap([...this.bindata])
@@ -1230,7 +1275,7 @@ export class Bitmap {
   private static __string_offset_concat(
     s1: string,
     s2: string,
-    offset?: number
+    offset?: number | null
   ): string {
     const _offset = offset ?? 0
     if (_offset === 0) {
@@ -1257,7 +1302,7 @@ export class Bitmap {
   private static __listofstr_offset_concat(
     list1: string[],
     list2: string[],
-    offset?: number
+    offset?: number | null
   ): string[] {
     const _offset = offset ?? 0
     let s1: string, s2: string
@@ -1326,9 +1371,9 @@ export class Bitmap {
    *
    * @returns The `Bitmap` object itself, which now has only the specified area as its `.bindata`
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#crop}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#crop}
    */
-  crop(w: number, h: number, xoff?: number, yoff?: number): this {
+  crop(w: number, h: number, xoff?: number | null, yoff?: number | null): this {
     const _xoff = xoff ?? 0
     const _yoff = yoff ?? 0
     this.bindata = Bitmap.__crop_bitmap(this.bindata, w, h, _xoff, _yoff)
@@ -1342,7 +1387,7 @@ export class Bitmap {
    *
    * @returns The `Bitmap` object itself, which now has the combined bitmap as its `.bindata`
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#overlay}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#overlay}
    */
   overlay(bitmap: Bitmap): this {
     const bindata_a = this.bindata
@@ -1365,7 +1410,7 @@ export class Bitmap {
   }
 
   /**
-   * Concatenate all `Bitmap` Objects in a `list`.
+   * Concatenate all `Bitmap` objects in an `array`.
    *
    * @param bitmaplist - List of bitmaps to concatenate
    * @param direction - Direction
@@ -1374,17 +1419,19 @@ export class Bitmap {
    *
    * @returns `Bitmap` object
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#bitmapconcatall}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#bitmapconcatall}
    */
   static concatall(
     bitmaplist: Bitmap[],
-    direction?: DirectionNumberType | null,
-    align?: 0 | 1 | null,
-    offsetlist?: number[] | null
+    options: {
+      direction?: DirectionNumberType | null
+      align?: 0 | 1 | null
+      offsetlist?: number[] | null
+    } = {}
   ): Bitmap {
-    const _direction = direction ?? 1
-    const _align = align ?? 1
-    const _offsetlist = offsetlist ?? null
+    const _direction = options.direction ?? 1
+    const _align = options.align ?? 1
+    const _offsetlist = options.offsetlist ?? null
     let bd, ireal, maxsize, offset, ret: string[], w, xoff
     if (_direction > 0) {
       maxsize = Math.max(...bitmaplist.map((val) => val.height()))
@@ -1473,36 +1520,39 @@ export class Bitmap {
   }
 
   /**
-   * Concatenate another `Bitmap` Objects to the current one.
+   * Concatenate another `Bitmap` objects to the current one.
    *
    * @param bitmap - Bitmap to concatenate
    * @param direction - Direction
    * @param align - Align
-   * @param offsetlist - List of spacing offsets between every two glyphs
+   * @param offset - Spacing offset between the glyphs
    *
    * @returns The `Bitmap` object itself, which now has the combined bitmap as its `.bindata`
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#concat}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#concat}
    */
   concat(
     bitmap: Bitmap,
-    direction?: DirectionNumberType | null,
-    align?: 0 | 1 | null,
-    offsetlist?: number[] | null
+    options: {
+      direction?: DirectionNumberType | null
+      align?: 0 | 1 | null
+      offset?: number | null
+    } = {}
   ): this {
-    this.bindata = Bitmap.concatall(
-      [this, bitmap],
+    const { direction, align, offset } = options
+    const _offset = offset ?? 0
+    this.bindata = Bitmap.concatall([this, bitmap], {
       direction,
       align,
-      offsetlist
-    ).bindata
+      offsetlist: [_offset],
+    }).bindata
     return this
   }
 
   private static __enlarge_bindata(
     bindata: string[],
-    x?: number,
-    y?: number
+    x?: number | null,
+    y?: number | null
   ): string[] {
     const _x = x ?? 1
     const _y = y ?? 1
@@ -1527,14 +1577,14 @@ export class Bitmap {
   }
 
   /**
-   * Enlarge a `Bitmap` Object, by multiplying every pixel in x (right) direction and in y (top) direction.
+   * Enlarge a `Bitmap` object, by multiplying every pixel in x (right) direction and in y (top) direction.
    *
    * @param x - Multiplier in x (right) direction
    * @param y - Multiplier in y (top) direction
    *
    * @returns The `Bitmap` object itself, which now has the enlarged bitmap as its `.bindata`
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#enlarge}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#enlarge}
    */
   enlarge(x?: number, y?: number): this {
     this.bindata = Bitmap.__enlarge_bindata(this.bindata, x, y)
@@ -1549,7 +1599,7 @@ export class Bitmap {
    *
    * @returns The `Bitmap` object itself, which now has the altered bitmap as its `.bindata`
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#replace}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#replace}
    */
   replace(substr: string | number, newsubstr: string | number): this {
     const _substr = typeof substr === 'number' ? substr.toString() : substr
@@ -1587,9 +1637,9 @@ export class Bitmap {
    *
    * @returns The `Bitmap` object itself, which now has a bitmap of the original shape with its shadow as the `Bitmap` object's `.bindata`
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#shadow}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#shadow}
    */
-  shadow(xoff?: number, yoff?: number): this {
+  shadow(xoff?: number | null, yoff?: number | null): this {
     const _xoff = xoff ?? 1
     const _yoff = yoff ?? -1
     let h, resized_xoff, resized_yoff, shadow_xoff, shadow_yoff, w
@@ -1625,13 +1675,16 @@ export class Bitmap {
   /**
    * Add glow effect to the shape in the bitmap.
    *
-   * The glowing area is one pixel up, right, bottom and left to the original pixels, and will be filled by `'2'`s.
+   * The glowing area is one pixel up, right, bottom and left to the original pixels (corners will not be filled in default mode 0 but will in mode 1), and will be filled by `'2'`s.
+   *
+   * @param mode - Mode
    *
    * @returns The `Bitmap` object itself, which now has a bitmap of the original shape with glow effect as the `Bitmap` object's `.bindata`
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#glow}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#glow}
    */
-  glow(): this {
+  glow(mode?: 0 | 1 | null): this {
+    const _mode = mode ?? 0
     let line, pixel, w, h
     w = this.width()
     h = this.height()
@@ -1646,10 +1699,16 @@ export class Bitmap {
       for (let i_pixel = 0; i_pixel < ll; i_pixel++) {
         pixel = line[i_pixel]
         if (pixel === 1) {
-          b[i_line][i_pixel - 1] = b[i_line][i_pixel - 1] || 2
-          b[i_line][i_pixel + 1] = b[i_line][i_pixel + 1] || 2
-          b[i_line - 1][i_pixel] = b[i_line - 1][i_pixel] || 2
-          b[i_line + 1][i_pixel] = b[i_line + 1][i_pixel] || 2
+          b[i_line][i_pixel - 1] ||= 2
+          b[i_line][i_pixel + 1] ||= 2
+          b[i_line - 1][i_pixel] ||= 2
+          b[i_line + 1][i_pixel] ||= 2
+          if (_mode === 1) {
+            b[i_line - 1][i_pixel - 1] ||= 2
+            b[i_line - 1][i_pixel + 1] ||= 2
+            b[i_line + 1][i_pixel - 1] ||= 2
+            b[i_line + 1][i_pixel + 1] ||= 2
+          }
         }
       }
     }
@@ -1666,9 +1725,9 @@ export class Bitmap {
    *
    * @returns The `Bitmap` object itself, which now has the altered bitmap as its `.bindata`
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#bytepad}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#bytepad}
    */
-  bytepad(bits?: number): this {
+  bytepad(bits?: number | null): this {
     const _bits = bits ?? 8
     const w = this.width()
     const h = this.height()
@@ -1686,9 +1745,11 @@ export class Bitmap {
    *
    * @returns Bitmap data in the specified type (list or string) and format
    *
-   * @see {@link https://font.tomchen.org/bdfparser_py/bitmap#todata}
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#todata}
    */
-  todata<T extends 0 | 1 | 2 | 3 | 4 | 5>(datatype: T): TodataFuncRetType<T> {
+  todata<T extends 0 | 1 | 2 | 3 | 4 | 5 | null>(
+    datatype?: T
+  ): TodataFuncRetType<T> {
     const _datatype = datatype ?? 1
     let ret: unknown
     switch (_datatype) {
@@ -1727,4 +1788,74 @@ export class Bitmap {
     }
     return ret as TodataFuncRetType<T>
   }
+
+  /**
+   * Draw the bitmap to HTML canvas
+   *
+   * @param context - Canvas 2D context (`canvas.getContext("2d")`)
+   * @param pixelcolors - Object mapping `'0'`/`'1'`/`'2'` in the bitmap data to color
+   *
+   * @returns The `Bitmap` object itself
+   *
+   * @see {@link http://localhost:3000/bdfparser_js/bitmap#draw2canvas}
+   */
+  draw2canvas(
+    context: CanvasContext,
+    pixelcolors?: Record<'0' | '1' | '2', string | null> | null
+  ): this {
+    const _pixelcolors = pixelcolors ?? {
+      '0': null,
+      '1': 'black',
+      '2': 'red',
+    }
+    this.todata(2).forEach((line, y) => {
+      line.forEach((pixel, x) => {
+        const s = pixel.toString()
+        if (s === '0' || s === '1' || s === '2') {
+          const color = _pixelcolors[s]
+          if (color !== null && color !== undefined) {
+            context.fillStyle = color
+            context.fillRect(x, y, 1, 1)
+          }
+        }
+      })
+    })
+    return this
+  }
+}
+
+/**
+ * Shortcut for `new Font().load_filelines(filelines)` so you don't need to write `new` and `.load_filelines`
+ *
+ * @param filelines - Asynchronous iterator representing each line in string text from the font file
+ *
+ * @returns The newly instantiated `Font` object that's loaded the font file
+ */
+export const $Font = async (
+  filelines: AsyncIterableIterator<string>
+): Promise<Font> => {
+  return await new Font().load_filelines(filelines)
+}
+
+/**
+ * Shortcut for `new Glyph(meta_obj, font)` so you don't need to write `new`
+ *
+ * @param meta_obj - Meta information
+ * @param font - The font the glyph belongs to
+ *
+ * @returns The newly instantiated `Glyph` object
+ */
+export const $Glyph = (meta_obj: GlyphMeta, font: Font): Glyph => {
+  return new Glyph(meta_obj, font)
+}
+
+/**
+ * Shortcut for `new Bitmap(bin_bitmap_list)` so you don't need to write `new`
+ *
+ * @param bin_bitmap_list - Binary bitmap data
+ *
+ * @returns The newly instantiated `Bitmap` object
+ */
+export const $Bitmap = (bin_bitmap_list: string[]): Bitmap => {
+  return new Bitmap(bin_bitmap_list)
 }

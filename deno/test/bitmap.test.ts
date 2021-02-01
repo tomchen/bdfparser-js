@@ -1,22 +1,27 @@
-import { Font, Bitmap } from '../src/index'
-import filelines from '../src/filelines'
-import { specfont_path, bitmap_qr2_bindata, bitmap_qr3_bindata } from './info'
+import { Bitmap, Font } from '../mod.ts'
+import filelines from '../filelines.ts'
+import {
+  specfont_path,
+  bitmap_qr2_bindata,
+  bitmap_qr3_bindata,
+} from './info.ts'
+import { expect, test, describe } from './jest_to_deno.ts'
 
 describe('Bitmap', () => {
-  let font
-  let bitmap_qr
-  let bitmap_qr2
+  let font: Font
+  let bitmap_qr: Bitmap
+  let bitmap_qr2: Bitmap
 
-  beforeEach(async () => {
+  const beforeEach = async () => {
     font = new Font()
     await font.load_filelines(filelines(specfont_path))
-    bitmap_qr = font.glyph("'").draw(2)
+    bitmap_qr = font.glyph("'")?.draw(2) as Bitmap
     bitmap_qr2 = new Bitmap(bitmap_qr2_bindata)
-    return
-  })
+  }
 
   describe('basic', () => {
-    test('bindata', () => {
+    test('bindata', async () => {
+      await beforeEach()
       expect(bitmap_qr.bindata).toEqual([
         '01110000',
         '01110000',
@@ -34,24 +39,28 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('width', () => {
+    test('width', async () => {
+      await beforeEach()
       expect(bitmap_qr.width()).toEqual(8)
       expect(bitmap_qr2.width()).toEqual(5)
     })
 
-    test('height', () => {
+    test('height', async () => {
+      await beforeEach()
       expect(bitmap_qr.height()).toEqual(6)
       expect(bitmap_qr2.height()).toEqual(5)
     })
 
-    test('clone', () => {
+    test('clone', async () => {
+      await beforeEach()
       expect(bitmap_qr.clone()).not.toBe(bitmap_qr)
       expect(bitmap_qr.clone().bindata).toEqual(bitmap_qr.bindata)
     })
   })
 
   describe('alter', () => {
-    test('crop_default', () => {
+    test('crop_default', async () => {
+      await beforeEach()
       expect(bitmap_qr2.crop(6, 10).bindata).toEqual([
         '000000',
         '000000',
@@ -66,7 +75,8 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('crop', () => {
+    test('crop', async () => {
+      await beforeEach()
       expect(bitmap_qr.crop(6, 10, -1, -2).bindata).toEqual([
         '000000',
         '000000',
@@ -81,7 +91,8 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('replace', () => {
+    test('replace', async () => {
+      await beforeEach()
       expect(bitmap_qr2.replace('2', '3').bindata).toEqual([
         '01110',
         '03113',
@@ -93,7 +104,8 @@ describe('Bitmap', () => {
   })
 
   describe('overlay', () => {
-    test('overlay', () => {
+    test('overlay', async () => {
+      await beforeEach()
       expect(
         bitmap_qr.overlay(
           bitmap_qr2.crop(bitmap_qr.width(), bitmap_qr.height())
@@ -110,16 +122,20 @@ describe('Bitmap', () => {
   })
 
   describe('concat', () => {
-    let bitmap_j
-    beforeEach(() => {
-      bitmap_j = font.glyph('j').draw(2)
-    })
+    let bitmap_j: Bitmap
+    const beforeEach2 = () => {
+      bitmap_j = font.glyph('j')?.draw(2) as Bitmap
+    }
 
-    test('concatall_onlyone', () => {
+    test('concatall_onlyone', async () => {
+      await beforeEach()
+      await beforeEach2()
       expect(Bitmap.concatall([bitmap_qr]).bindata).toEqual(bitmap_qr.bindata)
     })
 
-    test('concatall', () => {
+    test('concatall', async () => {
+      await beforeEach()
+      await beforeEach2()
       const w = bitmap_qr.width()
       expect(
         Bitmap.concatall([bitmap_qr, bitmap_j, bitmap_qr2]).bindata
@@ -150,7 +166,9 @@ describe('Bitmap', () => {
       expect(bitmap_qr.width()).toEqual(w)
     })
 
-    test('concatall_offsetlist', () => {
+    test('concatall_offsetlist', async () => {
+      await beforeEach()
+      await beforeEach2()
       expect(
         Bitmap.concatall([bitmap_qr, bitmap_j, bitmap_qr2], {
           offsetlist: [-5, 4],
@@ -181,7 +199,9 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('concatall_direction_2', () => {
+    test('concatall_direction_2', async () => {
+      await beforeEach()
+      await beforeEach2()
       expect(
         Bitmap.concatall([bitmap_qr, bitmap_j, bitmap_qr2], { direction: 2 })
           .bindata
@@ -211,7 +231,9 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('concatall_direction_0', () => {
+    test('concatall_direction_0', async () => {
+      await beforeEach()
+      await beforeEach2()
       expect(
         Bitmap.concatall([bitmap_qr, bitmap_j, bitmap_qr2], { direction: 0 })
           .bindata
@@ -252,7 +274,9 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('concatall_direction_m1', () => {
+    test('concatall_direction_m1', async () => {
+      await beforeEach()
+      await beforeEach2()
       expect(
         Bitmap.concatall([bitmap_qr, bitmap_j, bitmap_qr2], { direction: -1 })
           .bindata
@@ -293,7 +317,9 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('concatall_align_0', () => {
+    test('concatall_align_0', async () => {
+      await beforeEach()
+      await beforeEach2()
       expect(
         Bitmap.concatall([bitmap_qr, bitmap_j, bitmap_qr2], { align: 0 })
           .bindata
@@ -323,7 +349,9 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('concatall_direction_2_align_0', () => {
+    test('concatall_direction_2_align_0', async () => {
+      await beforeEach()
+      await beforeEach2()
       expect(
         Bitmap.concatall([bitmap_qr, bitmap_j, bitmap_qr2], {
           direction: 2,
@@ -355,7 +383,9 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('concatall_direction_0_align_0', () => {
+    test('concatall_direction_0_align_0', async () => {
+      await beforeEach()
+      await beforeEach2()
       expect(
         Bitmap.concatall([bitmap_qr, bitmap_j, bitmap_qr2], {
           direction: 0,
@@ -398,7 +428,9 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('concatall_direction_m1_align_0', () => {
+    test('concatall_direction_m1_align_0', async () => {
+      await beforeEach()
+      await beforeEach2()
       expect(
         Bitmap.concatall([bitmap_qr, bitmap_j, bitmap_qr2], {
           direction: -1,
@@ -441,7 +473,9 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('concat', () => {
+    test('concat', async () => {
+      await beforeEach()
+      await beforeEach2()
       const w = bitmap_qr.width()
       const w2 = bitmap_j.width()
       expect(bitmap_qr.concat(bitmap_j).bindata).toEqual([
@@ -473,7 +507,8 @@ describe('Bitmap', () => {
   })
 
   describe('enlarge', () => {
-    test('enlarge', () => {
+    test('enlarge', async () => {
+      await beforeEach()
       expect(bitmap_qr2.enlarge(2, 3).bindata).toEqual([
         '0011111100',
         '0011111100',
@@ -495,7 +530,8 @@ describe('Bitmap', () => {
   })
 
   describe('effect', () => {
-    test('shadow', () => {
+    test('shadow', async () => {
+      await beforeEach()
       expect(bitmap_qr.shadow(2, -3).bindata).toEqual([
         '0111000000',
         '0111000000',
@@ -509,7 +545,8 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('glow 0', () => {
+    test('glow 0', async () => {
+      await beforeEach()
       expect(bitmap_qr.glow().bindata).toEqual([
         '0022200000',
         '0211120000',
@@ -522,7 +559,8 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('glow 1', () => {
+    test('glow 1', async () => {
+      await beforeEach()
       expect(bitmap_qr.glow(1).bindata).toEqual([
         '0222220000',
         '0211120000',
@@ -537,13 +575,14 @@ describe('Bitmap', () => {
   })
 
   describe('pad', () => {
-    let bitmap_qr3
+    let bitmap_qr3: Bitmap
 
-    beforeEach(() => {
+    const beforeEach = () => {
       bitmap_qr3 = new Bitmap(bitmap_qr3_bindata)
-    })
+    }
 
-    test('bytepad', () => {
+    test('bytepad', async () => {
+      await beforeEach()
       expect(bitmap_qr2.bytepad().bindata).toEqual([
         '01110000',
         '02112000',
@@ -553,7 +592,8 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('bytepad4', () => {
+    test('bytepad4', async () => {
+      await beforeEach()
       expect(bitmap_qr3.bytepad(4).bindata).toEqual([
         '011100000000',
         '021120000000',
@@ -568,17 +608,20 @@ describe('Bitmap', () => {
     const bitmap_todata_test = new Bitmap(['00010', '11010', '00201'])
     const bitmap_todata_test2 = new Bitmap(['00010', '11010'])
 
-    test('todata0', () => {
+    test('todata0', async () => {
+      await beforeEach()
       expect(bitmap_todata_test.todata(0)).toEqual(`00010
 11010
 00201`)
     })
 
-    test('todata1_default', () => {
+    test('todata1_default', async () => {
+      await beforeEach()
       expect(bitmap_todata_test.todata()).toEqual(['00010', '11010', '00201'])
     })
 
-    test('todata2', () => {
+    test('todata2', async () => {
+      await beforeEach()
       expect(bitmap_todata_test.todata(2)).toEqual([
         [0, 0, 0, 1, 0],
         [1, 1, 0, 1, 0],
@@ -586,7 +629,8 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('todata3', () => {
+    test('todata3', async () => {
+      await beforeEach()
       // prettier-ignore
       expect(bitmap_todata_test.todata(3)).toEqual([
         0, 0, 0, 1, 0,
@@ -595,29 +639,34 @@ describe('Bitmap', () => {
       ])
     })
 
-    test('todata4', () => {
+    test('todata4', async () => {
+      await beforeEach()
       expect(bitmap_todata_test2.todata(4)).toEqual(['02', '1a'])
     })
 
-    test('todata4_error', () => {
+    test('todata4_error', async () => {
+      await beforeEach()
       expect(() => {
         bitmap_todata_test.todata(4)
-      }).toThrow(new Error('Invalid binary string: 00201'))
+      }).toThrow('Invalid binary string: 00201')
     })
 
-    test('todata5', () => {
+    test('todata5', async () => {
+      await beforeEach()
       expect(bitmap_todata_test2.todata(5)).toEqual([2, 26])
     })
 
-    test('todata5_error', () => {
+    test('todata5_error', async () => {
+      await beforeEach()
       expect(() => {
         bitmap_todata_test.todata(5)
-      }).toThrow(new Error('Invalid binary string: 00201'))
+      }).toThrow('Invalid binary string: 00201')
     })
   })
 
   describe('str repr', () => {
-    test('str', () => {
+    test('str', async () => {
+      await beforeEach()
       expect(bitmap_qr.toString()).toEqual(`.###....
 .###....
 .###....
@@ -626,7 +675,8 @@ describe('Bitmap', () => {
 ##......`)
     })
 
-    test('repr', () => {
+    test('repr', async () => {
+      await beforeEach()
       expect(bitmap_qr.repr()).toEqual(`Bitmap([
   "01110000",
   "01110000",

@@ -197,9 +197,9 @@ export class Font {
   private __f?: AsyncIterableIterator<string>
 
   /**
-   * Load the BDF font file line async iterator.
+   * Load the BDF font file (file line async iterator).
    *
-   * @param filelines - Asynchronous iterator representing each line in string text from the font file
+   * @param filelines - Asynchronous iterable iterator containing each line in string text from the font file
    *
    * @returns The current `Font` object
    *
@@ -1827,7 +1827,7 @@ export class Bitmap {
 /**
  * Shortcut for `new Font().load_filelines(filelines)` so you don't need to write `new` and `.load_filelines`
  *
- * @param filelines - Asynchronous iterator representing each line in string text from the font file
+ * @param filelines - Asynchronous iterator containing each line in string text from the font file
  *
  * @returns The newly instantiated `Font` object that's loaded the font file
  */

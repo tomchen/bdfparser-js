@@ -1,5 +1,5 @@
 import { Font, Glyph } from '../src/index'
-import filelines from '../src/filelines'
+import filelines from '../src/readlineiter/nodefs'
 import {
   unifont_path,
   glyph_a_meta,

@@ -1,5 +1,5 @@
 import { Font, Bitmap } from '../src/index'
-import filelines from '../src/filelines'
+import filelines from '../src/readlineiter/nodefs'
 import { specfont_path, bitmap_qr2_bindata, bitmap_qr3_bindata } from './info'
 
 describe('Bitmap', () => {

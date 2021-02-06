@@ -1,5 +1,5 @@
 import { Font, Glyph } from '../mod.ts'
-import filelines from '../filelines.ts'
+import readlineiter from 'https://raw.githubusercontent.com/tomchen/fetchline/main/packages/readlineiter-deno/mod.ts'
 import {
   unifont_path,
   glyph_a_meta,
@@ -14,7 +14,7 @@ describe('Glyph', () => {
 
   const beforeEach = async () => {
     font = new Font()
-    await font.load_filelines(filelines(unifont_path))
+    await font.load_filelines(readlineiter(unifont_path))
     glyph_a = new Glyph(glyph_a_meta, font)
     return
   }
@@ -139,7 +139,42 @@ describe('Glyph', () => {
 
     test('repr', async () => {
       await beforeEach()
-      expect(glyph_a.repr().substring(0, 7)).toEqual('Glyph({')
+      expect(glyph_a.repr()).toEqual(`Glyph({
+  "glyphname": "U+0061",
+  "codepoint": 97,
+  "bbw": 8,
+  "bbh": 16,
+  "bbxoff": 0,
+  "bbyoff": -2,
+  "swx0": 500,
+  "swy0": 0,
+  "dwx0": 8,
+  "dwy0": 0,
+  "swx1": null,
+  "swy1": null,
+  "dwx1": null,
+  "dwy1": null,
+  "vvectorx": null,
+  "vvectory": null,
+  "hexdata": [
+    "00",
+    "00",
+    "00",
+    "00",
+    "00",
+    "00",
+    "3C",
+    "42",
+    "02",
+    "3E",
+    "42",
+    "42",
+    "46",
+    "3A",
+    "00",
+    "00"
+  ]
+}, Font(<-gnu-Unifont-Medium-R-Normal-Sans-16-160-75-75-c-80-iso10646-1>)`)
     })
   })
 })
@@ -150,7 +185,7 @@ describe('Glyph draw spec quoteright', () => {
 
   const beforeEach = async () => {
     font = new Font()
-    await font.load_filelines(filelines(specfont_path))
+    await font.load_filelines(readlineiter(specfont_path))
     glyph_qr = font.glyph("'") as Glyph
     return
   }
@@ -235,13 +270,15 @@ describe('Glyph draw spec quoteright', () => {
   test('origin', async () => {
     await beforeEach()
     expect(glyph_qr.origin()).toEqual([2, 6])
-    expect(glyph_qr.origin(1)).toEqual([-2, -12])
-    expect(glyph_qr.origin(2)).toEqual([-2, -12])
-    expect(glyph_qr.origin(-1, null, 1, 1)).toEqual([-1, -1])
-    expect(glyph_qr.origin(null, true)).toEqual([-2, -6])
-    expect(glyph_qr.origin(1, true)).toEqual([2, 12])
-    expect(glyph_qr.origin(2, true)).toEqual([2, 12])
-    expect(glyph_qr.origin(-1, true, 1, 1)).toEqual([1, 1])
+    expect(glyph_qr.origin({ mode: 1 })).toEqual([-2, -12])
+    expect(glyph_qr.origin({ mode: 2 })).toEqual([-2, -12])
+    expect(glyph_qr.origin({ mode: -1, xoff: 1, yoff: 1 })).toEqual([-1, -1])
+    expect(glyph_qr.origin({ fromorigin: true })).toEqual([-2, -6])
+    expect(glyph_qr.origin({ mode: 1, fromorigin: true })).toEqual([2, 12])
+    expect(glyph_qr.origin({ mode: 2, fromorigin: true })).toEqual([2, 12])
+    expect(
+      glyph_qr.origin({ mode: -1, fromorigin: true, xoff: 1, yoff: 1 })
+    ).toEqual([1, 1])
   })
 })
 
@@ -251,7 +288,7 @@ describe('Glyph draw spec j', () => {
 
   const beforeEach = async () => {
     font = new Font()
-    await font.load_filelines(filelines(specfont_path))
+    await font.load_filelines(readlineiter(specfont_path))
     glyph_j = font.glyph('j') as Glyph
     return
   }

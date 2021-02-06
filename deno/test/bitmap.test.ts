@@ -1,5 +1,5 @@
 import { Bitmap, Font } from '../mod.ts'
-import filelines from '../filelines.ts'
+import readlineiter from 'https://raw.githubusercontent.com/tomchen/fetchline/main/packages/readlineiter-deno/mod.ts'
 import {
   specfont_path,
   bitmap_qr2_bindata,
@@ -14,7 +14,7 @@ describe('Bitmap', () => {
 
   const beforeEach = async () => {
     font = new Font()
-    await font.load_filelines(filelines(specfont_path))
+    await font.load_filelines(readlineiter(specfont_path))
     bitmap_qr = font.glyph("'")?.draw(2) as Bitmap
     bitmap_qr2 = new Bitmap(bitmap_qr2_bindata)
   }

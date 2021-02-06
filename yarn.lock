@@ -3716,6 +3716,11 @@ readable-stream@^2.0.1:
     string_decoder "~1.1.1"
     util-deprecate "~1.0.1"
 
+readlineiter@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/readlineiter/-/readlineiter-1.0.0.tgz#3fed8ad544020eb80b5a0e63849aacb724dc2b90"
+  integrity sha512-xkqq+0e9QyY9LeoH1UMSERj809qg8DsVdDbHwc1IBjDWavBgojcaLb83suhmJmLvtVC2GdXYqFsnN9AvZQ6lFA==
+
 rechoir@^0.7.0:
   version "0.7.0"
   resolved "https://registry.yarnpkg.com/rechoir/-/rechoir-0.7.0.tgz#32650fd52c21ab252aa5d65b19310441c7e03aca"

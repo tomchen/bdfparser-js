@@ -1,5 +1,5 @@
 import { Font, Glyph } from '../src/index'
-import filelines from '../src/readlineiter/nodefs'
+import readlineiter from 'readlineiter'
 import { unifont_path, glyph_a_meta, missing_glyph_meta } from './info'
 
 describe('Font loading', () => {
@@ -10,7 +10,7 @@ describe('Font loading', () => {
   })
 
   test('load_filelines', async () => {
-    const lineIter = filelines(unifont_path)
+    const lineIter = readlineiter(unifont_path)
     expect(await font.load_filelines(lineIter)).toBeInstanceOf(Font)
   })
 })
@@ -20,7 +20,7 @@ describe('Font', () => {
 
   beforeEach(() => {
     font = new Font()
-    return font.load_filelines(filelines(unifont_path))
+    return font.load_filelines(readlineiter(unifont_path))
   })
 
   describe('basic', () => {

@@ -1,5 +1,5 @@
 import { Font, Bitmap } from '../src/index'
-import filelines from '../src/readlineiter/nodefs'
+import readlineiter from 'readlineiter'
 import { specfont_path, bitmap_qr2_bindata, bitmap_qr3_bindata } from './info'
 
 describe('Bitmap', () => {
@@ -9,7 +9,7 @@ describe('Bitmap', () => {
 
   beforeEach(async () => {
     font = new Font()
-    await font.load_filelines(filelines(specfont_path))
+    await font.load_filelines(readlineiter(specfont_path))
     bitmap_qr = font.glyph("'").draw(2)
     bitmap_qr2 = new Bitmap(bitmap_qr2_bindata)
     return

@@ -1,5 +1,5 @@
 import { Font, Glyph } from '../mod.ts'
-import filelines from '../filelines.ts'
+import readlineiter from 'https://raw.githubusercontent.com/tomchen/fetchline/main/packages/readlineiter-deno/mod.ts'
 import { unifont_path, glyph_a_meta, missing_glyph_meta } from './info.ts'
 import { expect, test, describe } from './jest_to_deno.ts'
 
@@ -12,7 +12,7 @@ describe('Font loading', () => {
 
   test('load_filelines', async () => {
     await beforeEach()
-    const lineIter = filelines(unifont_path)
+    const lineIter = readlineiter(unifont_path)
     expect(await font.load_filelines(lineIter)).toBeInstanceOf(Font)
   })
 })
@@ -22,7 +22,7 @@ describe('Font', () => {
 
   const beforeEach = () => {
     font = new Font()
-    return font.load_filelines(filelines(unifont_path))
+    return font.load_filelines(readlineiter(unifont_path))
   }
 
   describe('basic', () => {

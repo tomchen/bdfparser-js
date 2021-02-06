@@ -8,7 +8,9 @@ module.exports = {
     filename: 'index.js',
     library: 'bdfparser',
     libraryTarget: 'umd',
+    globalObject: 'this',
   },
+  // devtool: 'source-map',
   module: {
     rules: [
       {

@@ -56,3 +56,10 @@ font_preview.draw2canvas(document.getElementById('mycanvas3').getContext('2d'))
 
 })()
 ```
+
+If you are using **Deno** instead of Node.js, you don't need to install the package with npm/yarn, and you should replace `const { $Font } = require('bdfparser'); const getline = require('readlineiter')` by:
+
+```ts
+import { $Font } from "https://raw.githubusercontent.com/tomchen/bdfparser-js/main/deno/mod.ts"
+import readlineiter from 'https://raw.githubusercontent.com/tomchen/fetchline/main/packages/readlineiter-deno/mod.ts'
+```

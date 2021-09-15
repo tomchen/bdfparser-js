@@ -49,7 +49,7 @@ jobs:
         os:
           - ubuntu-latest
           - windows-latest
-        deno: ['v1.11', 'v1.12', 'v1.13', 'v1.x', 'nightly']
+        deno: ['v1.13', 'v1.x', 'nightly']
 
     steps:
       - uses: actions/checkout@v2

@@ -1,6 +1,6 @@
 {
   "name": "bdfparser",
-  "version": "2.2.4",
+  "version": "2.2.5",
   "description": "BDF (Glyph Bitmap Distribution Format) Bitmap Font File Parser Library in JavaScript (TypeScript)",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",

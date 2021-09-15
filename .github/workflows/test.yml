@@ -44,11 +44,12 @@ jobs:
   deno-test:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os:
           - ubuntu-latest
           - windows-latest
-        deno: ['v1.3', 'v1.5', 'v1.x', 'nightly']
+        deno: ['v1.5', 'v1.8', 'v1.10', 'v1.x', 'nightly']
 
     steps:
       - uses: actions/checkout@v2

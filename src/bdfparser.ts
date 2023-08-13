@@ -1797,7 +1797,10 @@ export class Bitmap {
    * Draw the bitmap to HTML canvas
    *
    * @param context - Canvas 2D context (`canvas.getContext("2d")`)
-   * @param pixelcolors - Object mapping `'0'`/`'1'`/`'2'` in the bitmap data to color
+   * @param options.pixelcolors - Object mapping `'0'`/`'1'`/`'2'` in the bitmap data to color
+   * @param options.x - X position of top left corner of bitmap
+   * @param options.y - Y position of top left corner of bitmap
+   * @param 
    *
    * @returns The `Bitmap` object itself
    *
@@ -1805,9 +1808,15 @@ export class Bitmap {
    */
   draw2canvas(
     context: CanvasContext,
-    pixelcolors?: Record<'0' | '1' | '2', string | null> | null
+    options: {
+      x?: number,
+      y?: number,
+      pixelcolors?: Record<'0' | '1' | '2', string | null> | null
+    } = {}
   ): this {
-    const _pixelcolors = pixelcolors ?? {
+    const _x = options.x ?? 0
+    const _y = options.y ?? 0
+    const _pixelcolors = options.pixelcolors ?? {
       '0': null,
       '1': 'black',
       '2': 'red',
@@ -1819,7 +1828,7 @@ export class Bitmap {
           const color = _pixelcolors[s]
           if (color !== null && color !== undefined) {
             context.fillStyle = color
-            context.fillRect(x, y, 1, 1)
+            context.fillRect(_x + x, _y + y, 1, 1)
           }
         }
       })

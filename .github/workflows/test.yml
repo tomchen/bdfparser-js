@@ -31,12 +31,15 @@ jobs:
         node: [12.x, 14.x, 16.x, 18.x, 20.x, 22.x, 23.x]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up Node.js
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
       - name: Install modules
         run: yarn
       - name: Run tests
         run: yarn test
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: github.event_name == 'push' && matrix.os == 'ubuntu-latest' && matrix.node == '23.x'

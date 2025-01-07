@@ -29,3 +29,9 @@ indent_style = tab
 
 [*.{md,mdx}]
 trim_trailing_whitespace = false
+
+[*.bdf]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = false
+trim_trailing_whitespace = false

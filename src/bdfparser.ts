@@ -227,7 +227,10 @@ export class Font {
 
   private async __parse_headers(): Promise<void> {
     while (1) {
-      const line: string = (await this.__f?.next())?.value
+      let line: string = (await this.__f?.next())?.value.trim()
+      while (line.length === 0) {
+        line = (await this.__f?.next())?.value.trim()
+      }
       const kvlist = line.split(/ (.+)/, 2)
       const l = kvlist.length
       let nlist: string[]
@@ -296,9 +299,8 @@ export class Font {
             break
           case 'METRICSSET':
           case 'CONTENTVERSION':
-            this.__headers[
-              <'metricsset' | 'contentversion'>key.toLowerCase()
-            ] = parseInt(value, 10)
+            this.__headers[<'metricsset' | 'contentversion'>key.toLowerCase()] =
+              parseInt(value, 10)
             break
           case 'CHARS':
             console.warn(
@@ -338,7 +340,10 @@ export class Font {
 
   private async __parse_props(): Promise<void> {
     while (1) {
-      const line: string = (await this.__f?.next())?.value
+      let line: string = (await this.__f?.next())?.value.trim()
+      while (line.length === 0) {
+        line = (await this.__f?.next())?.value.trim()
+      }
       const kvlist = line.split(/ (.+)/, 2)
       const l = kvlist.length
       if (l === 2) {
@@ -378,7 +383,10 @@ export class Font {
   private async __parse_glyph_count(): Promise<void> {
     let line: string
     if (this.__curline_chars === null) {
-      line = (await this.__f?.next())?.value
+      line = (await this.__f?.next())?.value.trim()
+      while (line.length === 0) {
+        line = (await this.__f?.next())?.value.trim()
+      }
     } else {
       line = this.__curline_chars
       this.__curline_chars = null
@@ -892,13 +900,8 @@ export class Font {
       missing?: Glyph | GlyphMeta | null
     } = {}
   ): Bitmap {
-    const {
-      linelimit,
-      mode,
-      direction,
-      usecurrentglyphspacing,
-      missing,
-    } = options
+    const { linelimit, mode, direction, usecurrentglyphspacing, missing } =
+      options
     return this.drawcps(
       str.split('').map((c) => {
         const cp = c.codePointAt(0)
@@ -942,14 +945,8 @@ export class Font {
       usecurrentglyphspacing?: boolean | null
     } = {}
   ): Bitmap {
-    const {
-      order,
-      r,
-      linelimit,
-      mode,
-      direction,
-      usecurrentglyphspacing,
-    } = options
+    const { order, r, linelimit, mode, direction, usecurrentglyphspacing } =
+      options
     const _mode = mode ?? 0
     return this.drawcps(this.itercps(order, r), {
       linelimit,
@@ -1616,9 +1613,11 @@ export class Bitmap {
       newsubstr: string
     ): string => {
       if ('replaceAll' in String.prototype) {
-        return (str as string & {
-          replaceAll: (...args: string[]) => string
-        }).replaceAll(substr, newsubstr)
+        return (
+          str as string & {
+            replaceAll: (...args: string[]) => string
+          }
+        ).replaceAll(substr, newsubstr)
       } else {
         const escapeRegExp = (s: string): string =>
           s.replace(/[.*+\-?^${}()|[\]\\]/g, '\\$&')

@@ -1,33 +1,6 @@
-import {
-  Font,
-  Glyph,
-  Bitmap,
-  $Font,
-  $Glyph,
-  $Bitmap,
-  Headers,
-  Props,
-  GlyphMetaInFont,
-  GlyphMeta,
-  TodataFuncRetType,
-  CodepointRangeType,
-  OrderType,
-  GlyphDrawModeType,
-  DirectionType,
-  DirectionNumberType,
-} from './bdfparser'
-
-export { Font, Glyph, Bitmap, $Font, $Glyph, $Bitmap }
-
-export type {
-  Headers,
-  Props,
-  GlyphMetaInFont,
-  GlyphMeta,
-  TodataFuncRetType,
-  CodepointRangeType,
-  OrderType,
-  GlyphDrawModeType,
-  DirectionType,
-  DirectionNumberType,
-}
+export * from './types'
+export * from './constants'
+export * from './Bitmap'
+export * from './Glyph'
+export * from './Font'
+export * from './utils'

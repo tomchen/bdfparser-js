@@ -5,7 +5,7 @@ import {
   $Font,
   $Glyph,
   $Bitmap,
-  Headers,
+  BdfHeaders,
   Props,
   GlyphMetaInFont,
   GlyphMeta,
@@ -15,12 +15,12 @@ import {
   GlyphDrawModeType,
   DirectionType,
   DirectionNumberType,
-} from '../src/bdfparser.ts'
+} from '../src/index.ts'
 
 export { Font, Glyph, Bitmap, $Font, $Glyph, $Bitmap }
 
 export type {
-  Headers,
+  BdfHeaders,
   Props,
   GlyphMetaInFont,
   GlyphMeta,

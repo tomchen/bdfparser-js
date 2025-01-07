@@ -1796,10 +1796,10 @@ export class Bitmap {
    * Draw the bitmap to HTML canvas
    *
    * @param context - Canvas 2D context (`canvas.getContext("2d")`)
-   * @param options.pixelcolors - Object mapping `'0'`/`'1'`/`'2'` in the bitmap data to color
-   * @param options.x - X position of top left corner of bitmap
-   * @param options.y - Y position of top left corner of bitmap
-   * @param 
+   * @param pixelcolors - Object mapping `'0'`/`'1'`/`'2'` in the bitmap data to color
+   * @param xoff - X position of top left corner of bitmap, default is 0
+   * @param yoff - Y position of top left corner of bitmap, default is 0
+   * @param
    *
    * @returns The `Bitmap` object itself
    *
@@ -1807,19 +1807,17 @@ export class Bitmap {
    */
   draw2canvas(
     context: CanvasContext,
-    options: {
-      x?: number,
-      y?: number,
-      pixelcolors?: Record<'0' | '1' | '2', string | null> | null
-    } = {}
+    pixelcolors?: Record<'0' | '1' | '2', string | null> | null,
+    xoff = 0,
+    yoff = 0
   ): this {
-    const _x = options.x ?? 0
-    const _y = options.y ?? 0
-    const _pixelcolors = options.pixelcolors ?? {
+    const _pixelcolors = pixelcolors ?? {
       '0': null,
       '1': 'black',
       '2': 'red',
     }
+    const _x = xoff ?? 0
+    const _y = yoff ?? 0
     this.todata(2).forEach((line, y) => {
       line.forEach((pixel, x) => {
         const s = pixel.toString()

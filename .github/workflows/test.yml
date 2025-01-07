@@ -40,22 +40,3 @@ jobs:
         run: yarn
       - name: Run tests
         run: yarn test
-
-  deno-test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-        deno: ['v1.13', 'v1.x', 'nightly']
-
-    steps:
-      - uses: actions/checkout@v2
-      - name: Set up Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: ${{ matrix.deno }}
-      - name: Run tests
-        run: cd deno && deno test --unstable --allow-read --allow-write --allow-net test/

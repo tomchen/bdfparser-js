@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
+import { runInNewContext } from 'vm'
 import opentype from 'opentype.js'
 import { Font } from '../src/Font'
 import { bitmapContours } from '../src/outline'
@@ -984,6 +985,22 @@ describe('readTtf: errors', () => {
     expect(readTtf(t).glyphs).toEqual(f.glyphs)
   })
 
+  test('input types: views, foreign-realm ArrayBuffer, invalid', () => {
+    const big = new Uint8Array(good.length + 5)
+    big.set(good, 3)
+    expect(readTtf(big.subarray(3, 3 + good.length)).glyphs).toEqual(f.glyphs)
+    expect(
+      readTtf(new DataView(good.slice().buffer) as unknown as Uint8Array).glyphs
+    ).toEqual(f.glyphs)
+    const foreign = runInNewContext('new ArrayBuffer(n)', {
+      n: good.length,
+    }) as ArrayBuffer
+    new Uint8Array(foreign).set(good)
+    expect(foreign instanceof ArrayBuffer).toBe(false)
+    expect(readTtf(foreign).glyphs).toEqual(f.glyphs)
+    expect(() => readTtf('true' as unknown as Uint8Array)).toThrow(TypeError)
+  })
+
   test('missing required table', () => {
     const tables = splitTables(good).filter(([t]) => t !== 'glyf')
     expect(() => readTtf(assemble(tables))).toThrow(/missing required table/)
@@ -1020,6 +1037,32 @@ describe('readTtf: errors', () => {
         )
       )
     ).toThrow(/glyph entry/)
+  })
+
+  test('huge glyph boxes are rejected instead of exhausting the memory', () => {
+    // corrupt BDFP box
+    const json = JSON.parse(
+      new TextDecoder().decode(
+        tableData(good, parseDirectory(good).get('BDFP'))
+      )
+    )
+    json.glyphs[0][3] = 100000
+    json.glyphs[0][4] = 100000
+    const tables = splitTables(good).map(([t, d]): [string, Uint8Array] => [
+      t,
+      t === 'BDFP' ? new TextEncoder().encode(JSON.stringify(json)) : d,
+    ])
+    expect(() => readTtf(assemble(tables))).toThrow(/too large/)
+    json.glyphs[0][3] = 0
+    json.glyphs[0][4] = 1e9
+    const tables2 = splitTables(good).map(([t, d]): [string, Uint8Array] => [
+      t,
+      t === 'BDFP' ? new TextEncoder().encode(JSON.stringify(json)) : d,
+    ])
+    expect(() => readTtf(assemble(tables2))).toThrow(/too large/)
+    // no BDFP and an absurd pixel size: every font unit is many pixels
+    const plain = writeTtf(f, { metadata: false })
+    expect(() => readTtf(plain, { pixelsize: 1e6 })).toThrow(/too large/)
   })
 
   test('short (spec) BDFP glyph entries [gid, cp, name]', () => {

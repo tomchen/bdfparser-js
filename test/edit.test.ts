@@ -351,6 +351,48 @@ describe('Glyph editing', () => {
     expect(font.glyphs.get(200)![0]).toBe('x')
   })
 
+  test('stale views of the same glyph do not revert each other', () => {
+    const g1 = font.glyphbycp(106)!
+    const g2 = font.glyphbycp(106)!
+    const x0 = g1.meta.bbxoff
+    g1.setmeta({ codepoint: 90 })
+    // g2 only changes what it changes (bbxoff), it does not move the glyph back
+    g2.shift(2)
+    expect([...font.glyphs.keys()].sort((a, b) => a - b)).toEqual([39, 90])
+    expect(font.glyphs.get(90)![4]).toBe(x0 + 2)
+    expect(g2.meta.codepoint).toBe(90)
+    expect(g2.meta.bbxoff).toBe(x0 + 2)
+    g1.setmeta({ glyphname: 'Z' }) // and g1 does not revert g2's shift
+    expect(font.glyphs.get(90)![0]).toBe('Z')
+    expect(font.glyphs.get(90)![4]).toBe(x0 + 2)
+    // a direct change of `meta` is written with the next editing method
+    g1.meta.dwx0 = 9
+    g1.shift(1)
+    expect(font.glyphs.get(90)![8]).toBe(9)
+    expect(font.glyphs.get(90)![4]).toBe(x0 + 3)
+    // the meta object is updated in place, hexdata is not shared with the font
+    const m = g2.meta
+    g2.shift(0, 1)
+    expect(g2.meta).toBe(m)
+    expect(g2.meta.hexdata).not.toBe(font.glyphs.get(90)![16])
+    expect(g2.meta.hexdata).toEqual(font.glyphs.get(90)![16])
+    expect(() => g2.setmeta({ codepoint: 1.5 })).toThrow(TypeError)
+    expect(font.glyphs.get(90)![1]).toBe(90)
+  })
+
+  test('a glyph obtained before charsetconvert() keeps its new codepoint', () => {
+    const f = read('unifont-13.0.04-enctest-gb2312.bdf')
+    const g = f.glyphbycp(0xc8cb)! // 人 in GB2312 (EUC)
+    f.charsetconvert('ISO10646-1')
+    const cps = [...f.glyphs.keys()].sort((a, b) => a - b)
+    expect(cps).toContain(0x4eba)
+    g.shift(1, 0)
+    expect([...f.glyphs.keys()].sort((a, b) => a - b)).toEqual(cps)
+    expect(f.glyphs.get(0x4eba)![4]).toBe(g.meta.bbxoff)
+    expect(g.meta.codepoint).toBe(0x4eba)
+    expect(g.chr()).toBe('人')
+  })
+
   test('detached glyphs do not write back; removed glyphs become detached', () => {
     const d = new Glyph(font.glyph('j')!.meta, font)
     d.setmeta({ dwx0: 99 })

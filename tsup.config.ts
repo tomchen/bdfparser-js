@@ -6,7 +6,9 @@ export default defineConfig([
     format: ['esm', 'cjs'],
     dts: { compilerOptions: { ignoreDeprecations: '6.0' } },
     sourcemap: true,
-    keepNames: true,
+    // no `keepNames` here: its `__name(...)` calls are side effects that
+    // defeat tree-shaking (importing only `warn` would pull in everything);
+    // the unminified ESM/CJS builds keep the original names anyway
     clean: true,
     target: 'es2020',
   },

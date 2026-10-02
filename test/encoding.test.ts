@@ -426,6 +426,67 @@ ${cps
     expect(k.char2cp('あ')).toBeNull()
   })
 
+  test('multi-byte charsets: 0x00-0x7F is ASCII in every runtime', () => {
+    // Node's ICU Shift_JIS decoder maps 0x1A -> U+001C, 0x1C -> U+007F and
+    // 0x7F -> U+001A (WHATWG, Bun, Deno and Python: identity)
+    for (const cs of [
+      'shiftjis',
+      'eucjp',
+      'jisx0208',
+      'euckr',
+      'ksc5601',
+      'gb2312',
+      'gbk',
+      'big5',
+    ]) {
+      const c = getCodec(cs)
+      for (let cp = 0; cp < 0x80; cp++) {
+        const ch = String.fromCharCode(cp)
+        expect(c.cp2char(cp), `${cs} ${cp}`).toBe(ch)
+        expect(c.char2cp(ch), `${cs} ${cp}`).toBe(cp)
+      }
+    }
+    expect(getCodec('shiftjis').cp2char(0xb1)).toBe('ｱ')
+    expect(getCodec('shiftjis').char2cp('ｱ')).toBe(0xb1)
+  })
+
+  test('windows-1252 does not depend on the runtime TextDecoder', async () => {
+    // Node.js 20's TextDecoder('windows-1252') decodes as ISO 8859-1
+    const Real = globalThis.TextDecoder
+    class Broken1252 extends Real {
+      constructor(label?: string, options?: TextDecoderOptions) {
+        super(
+          label?.toLowerCase() === 'windows-1252' ? 'iso-8859-2' : label,
+          options
+        )
+      }
+    }
+    vi.resetModules()
+    globalThis.TextDecoder = Broken1252 as typeof TextDecoder
+    try {
+      const enc = await import('../src/encoding')
+      const c = enc.getCodec('cp1252')
+      expect(c.cp2char(0x80)).toBe('€')
+      expect(c.cp2char(0x9f)).toBe('Ÿ')
+      expect(c.cp2char(0x81)).toBe('\x81') // WHATWG: C1 control
+      expect(c.cp2char(0xe9)).toBe('é')
+      expect(c.cp2char(0x41)).toBe('A')
+      expect(c.cp2char(0x100)).toBeNull()
+      expect(c.char2cp('€')).toBe(0x80)
+      expect(c.char2cp('Ÿ')).toBe(0x9f)
+      expect(c.char2cp('é')).toBe(0xe9)
+      expect(c.char2cp('\x80')).toBeNull()
+      expect(c.char2cp('Ā')).toBeNull()
+      // every byte round-trips
+      for (let b = 0; b < 0x100; b++) {
+        expect(c.char2cp(c.cp2char(b) as string)).toBe(b)
+      }
+    } finally {
+      globalThis.TextDecoder = Real
+      vi.resetModules()
+    }
+  })
+
   test('single-byte charsets', () => {
     const l1 = fontWith('ISO8859', '1', [0xe9])
     expect(l1.charset).toBe('iso88591')

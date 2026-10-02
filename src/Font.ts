@@ -17,7 +17,13 @@ import {
   sanitizeCharset,
 } from './encoding'
 import { BDFParseError } from './errors'
-import { Glyph, defaultglyphname, listToMeta, metaToList } from './Glyph'
+import {
+  Glyph,
+  defaultglyphname,
+  listToMeta,
+  metaToList,
+  slotEquals,
+} from './Glyph'
 import { readPcf, writePcf } from './pcf'
 import { readTtf, writeTtf } from './ttf'
 import {
@@ -839,7 +845,7 @@ export class Font {
     const ascent = options.ascent ?? pixelsize - descent
     const familyname = options.familyname ?? 'Untitled'
     const fontname = options.fontname ?? familyname
-    const font = new Font()
+    const font = newFont()
     font.headers = {
       bdfversion: 2.1,
       fontname,
@@ -1367,15 +1373,37 @@ export class Font {
       glyph._detach()
       return
     }
-    const values = metaToList(glyph.meta)
+    const values = metaToList(glyph.meta) as unknown[]
+    const synced = glyph._synced
+    if (synced !== null) {
+      // slots this Glyph object did not change but that were changed in the
+      // font meanwhile (by another Glyph object on the same glyph, or by
+      // `charsetconvert`) keep the font's value instead of being reverted
+      for (let i = 0; i < 17; i++) {
+        if (
+          slotEquals(values[i], synced[i]) &&
+          !slotEquals(store[i], synced[i])
+        ) {
+          values[i] = store[i]
+        }
+      }
+    }
+    values[16] = Array.isArray(values[16]) ? [...values[16]] : []
+    if (values[1] === null || values[1] === undefined) {
+      values[1] = -1
+    } else if (!Number.isInteger(values[1])) {
+      throw new TypeError(
+        `Glyph codepoint must be an integer, not ${String(values[1])}`
+      )
+    } else if ((values[1] as number) < 0) {
+      values[1] = -1
+    }
     for (let i = 0; i < 17; i++) {
       ;(store as unknown[])[i] = values[i]
     }
     const newcp = store[1]
-    if (newcp < 0) {
-      store[1] = -1
-      glyph.meta.codepoint = -1
-    }
+    Object.assign(glyph.meta, listToMeta(store), { hexdata: [...store[16]] })
+    glyph._setsynced(store)
     if (oldcp >= 0 ? newcp !== oldcp : newcp >= 0) {
       if (oldcp < 0) {
         this.unencoded.splice(uidx, 1)
@@ -1629,7 +1657,7 @@ export class Font {
    * @returns New `Font` object
    */
   clone(): Font {
-    return this.__copyinto(new Font(), true)
+    return this.__copyinto(newFont(), true)
   }
 
   /**
@@ -1644,7 +1672,7 @@ export class Font {
    * const ascii = font.subset([0x20, 0x7e])
    */
   subset(r: CodepointRangeType | null): Font {
-    const font = this.__copyinto(new Font(), false)
+    const font = this.__copyinto(newFont(), false)
     for (const [cp, list] of this.glyphs) {
       if (cpInRange(cp, r)) {
         font.glyphs.set(cp, cloneList(list))
@@ -2046,3 +2074,9 @@ export class Font {
     return svg
   }
 }
+
+/**
+ * `new Font()` outside the class body: esbuild renames a class whose body
+ * references its own name (`Font.name` would become `'_Font'`).
+ */
+const newFont = (): Font => new Font()

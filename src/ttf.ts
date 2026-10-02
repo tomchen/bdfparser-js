@@ -1455,6 +1455,21 @@ const present = (v: unknown): string | undefined => {
   return t === '' ? undefined : t
 }
 
+/**
+ * Largest glyph pixel box (w × h) the reader rasterizes: a corrupt or hostile
+ * outline (or BDFP box) could otherwise ask for billions of pixels and exhaust
+ * the memory (a fatal, uncatchable error in Node.js).
+ */
+const MAX_GLYPH_PIXELS = 1 << 24
+
+const checkBox = (w: number, h: number): void => {
+  if (Math.max(w, 1) * Math.max(h, 1) > MAX_GLYPH_PIXELS) {
+    throw new Error(
+      `TrueType glyph too large to rasterize (${w}×${h} pixels): corrupt font or wrong pixelsize`
+    )
+  }
+}
+
 /** 17-slot meta with BBX and hexdata from the rasterized outline */
 const rasterMeta = (
   contours: Pt[][],
@@ -1468,6 +1483,7 @@ const rasterMeta = (
     meta[3] = h
     meta[4] = xo
     meta[5] = yo
+    checkBox(w, h)
     if (w > 0 && h > 0) {
       meta[16] = encodeBitmap(rasterize(contours, ppu, xo, yo, w, h), w)
     } else if (w > 0) {
@@ -1498,6 +1514,7 @@ const rasterMeta = (
   const y0 = Math.floor(ymin / ppu)
   const w = Math.ceil(xmax / ppu) - x0
   const h = Math.ceil(ymax / ppu) - y0
+  checkBox(w, h)
   const bm = w > 0 && h > 0 ? rasterize(contours, ppu, x0, y0, w, h) : []
   const [tw, th, txo, tyo, hex] = trimToHex(bm, x0, y0)
   meta[2] = tw
@@ -1537,7 +1554,15 @@ export const readTtf = (
   data: Uint8Array | ArrayBuffer,
   options: ReadTtfOptions = {}
 ): Font => {
-  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
+  let bytes: Uint8Array
+  if (ArrayBuffer.isView(data)) {
+    bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  } else if (Object.prototype.toString.call(data) === '[object ArrayBuffer]') {
+    // not `instanceof`: also accept ArrayBuffers from other realms
+    bytes = new Uint8Array(data)
+  } else {
+    throw new TypeError('TrueType data must be a Uint8Array or an ArrayBuffer')
+  }
   if (bytes.length < 12) {
     throw malformed('file too short')
   }

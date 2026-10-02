@@ -64,6 +64,23 @@ const bin2hex = (row: string, ndigits: number): string => {
   return s
 }
 
+/** copy of a 17-slot list (and of its hexdata array) */
+export const snapshot = (list: GlyphMetaInFont): GlyphMetaInFont => {
+  const l = [...list] as GlyphMetaInFont
+  if (Array.isArray(l[16])) {
+    l[16] = [...l[16]]
+  }
+  return l
+}
+
+/** equality of two slot values (hexdata arrays compared row by row) */
+export const slotEquals = (a: unknown, b: unknown): boolean => {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => v === b[i])
+  }
+  return a === b
+}
+
 /** hexdata arrays already warned about (missing rows), to warn once per glyph */
 const warnedRows = new WeakSet<string[]>()
 
@@ -96,6 +113,8 @@ export class Glyph {
   public font: Font
   private __attached = false
   private __store: GlyphMetaInFont | null = null
+  /** copy of the store as last seen by this object (see `Font._writeback`) */
+  private __synced: GlyphMetaInFont | null = null
 
   /**
    * `Glyph` object constructor
@@ -116,6 +135,20 @@ export class Glyph {
   _attach(store: GlyphMetaInFont): void {
     this.__attached = true
     this.__store = store
+    this.__synced = snapshot(store)
+  }
+
+  /**
+   * @internal Copy of the font's 17-slot list as last seen by this object
+   * (`null` if detached), to detect changes made to the font meanwhile.
+   */
+  get _synced(): GlyphMetaInFont | null {
+    return this.__attached ? this.__synced : null
+  }
+
+  /** @internal Record the font's current 17-slot list as seen. */
+  _setsynced(store: GlyphMetaInFont): void {
+    this.__synced = snapshot(store)
   }
 
   /**
@@ -517,7 +550,7 @@ export class Glyph {
     if (Array.isArray(meta.hexdata)) {
       meta.hexdata = [...meta.hexdata]
     }
-    return new Glyph(meta, this.font)
+    return newGlyph(meta, this.font)
   }
 
   /**
@@ -533,3 +566,9 @@ export class Glyph {
     return this.setbitmap(bitmap, 1, null, false)
   }
 }
+
+/**
+ * `new Glyph(meta, font)` outside the class body: esbuild renames a class whose
+ * body references its own name (`Glyph.name` would become `'_Glyph'`).
+ */
+const newGlyph = (meta: GlyphMeta, font: Font): Glyph => new Glyph(meta, font)

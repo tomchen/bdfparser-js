@@ -98,7 +98,8 @@
         a.href = URL.createObjectURL(new Blob([data], { type }))
         a.download = name
         a.click()
-        URL.revokeObjectURL(a.href)
+        // revoking synchronously can cancel the download in some browsers
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000)
       }
       document.getElementById('bdf').onclick = () =>
         download(font.tobdf(), 'unifont-edited.bdf', 'text/plain')

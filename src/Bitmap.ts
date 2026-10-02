@@ -54,6 +54,132 @@ export const fmtnum = (n: number): string => String(n)
 const ORed = (a: string, b: string | undefined): string =>
   b !== undefined && b !== '0' ? b : a
 
+// Module-level helpers instead of static class members: esbuild renames a
+// class whose body references its own name (`Bitmap.name` would become
+// '_Bitmap' without `keepNames`, which defeats tree-shaking), so the class
+// body must not mention `Bitmap` at runtime.
+
+const cropString = (s: string, start: number, length: number): string => {
+  let stemp = s
+  const l = s.length
+  let left = 0
+  if (start < 0) {
+    left = 0 - start
+    stemp = stemp.padStart(left + l, '0')
+  }
+  if (start + length > l) {
+    stemp = stemp.padEnd(start + length - l + stemp.length, '0')
+  }
+  const newstart = start + left
+  return stemp.slice(newstart, newstart + length)
+}
+
+const stringOffsetConcat = (
+  s1: string,
+  s2: string,
+  offset?: number | null
+): string => {
+  const _offset = offset ?? 0
+  if (_offset === 0) {
+    return s1 + s2
+  }
+  const len1 = s1.length
+  const len2 = s2.length
+  const s2start = len1 + _offset
+  const s2end = s2start + len2
+  const finalstart = Math.min(0, s2start)
+  const finalend = Math.max(len1, s2end)
+  const news1 = cropString(s1, finalstart, finalend - finalstart)
+  const news2 = cropString(s2, finalstart - s2start, finalend - finalstart)
+  let ret = ''
+  for (let i = 0; i < news1.length; i++) {
+    ret += ORed(news1[i], news2[i])
+  }
+  return ret
+}
+
+const listofstrOffsetConcat = (
+  list1: string[],
+  list2: string[],
+  offset?: number | null
+): string[] => {
+  const _offset = offset ?? 0
+  let s1: string, s2: string
+  if (_offset === 0) {
+    return list1.concat(list2)
+  }
+  const width = list1.length > 0 ? list1[0].length : (list2[0]?.length ?? 0)
+  const len1 = list1.length
+  const len2 = list2.length
+  const s2start = len1 + _offset
+  const s2end = s2start + len2
+  const finalstart = Math.min(0, s2start)
+  const finalend = Math.max(len1, s2end)
+  const retlist: string[] = []
+  for (let i = finalstart; i < finalend; i++) {
+    if (i < 0 || i >= len1) {
+      s1 = '0'.repeat(width)
+    } else {
+      s1 = list1[i]
+    }
+    if (i < s2start || i >= s2end) {
+      s2 = '0'.repeat(width)
+    } else {
+      s2 = list2[i - s2start]
+    }
+    let row = ''
+    for (let j = 0; j < s1.length; j++) {
+      row += ORed(s1[j], s2[j])
+    }
+    retlist.push(row)
+  }
+  return retlist
+}
+
+const cropBitmap = (
+  bitmap: string[],
+  w: number,
+  h: number,
+  xoff: number,
+  yoff: number
+): string[] => {
+  let bn
+  const retlist = []
+  const l = bitmap.length
+  for (let n = 0; n < h; n++) {
+    bn = l - yoff - h + n
+    if (bn < 0 || bn >= l) {
+      retlist.push('0'.repeat(w))
+    } else {
+      retlist.push(cropString(bitmap[bn], xoff, w))
+    }
+  }
+  return retlist
+}
+
+const enlargeBindata = (
+  bindata: string[],
+  x?: number | null,
+  y?: number | null
+): string[] => {
+  const _x = x ?? 1
+  const _y = y ?? 1
+  let ret = [...bindata]
+
+  if (_x > 1) {
+    ret = ret.map((v) =>
+      v
+        .split('')
+        .map((c) => c.repeat(_x))
+        .join('')
+    )
+  }
+  if (_y > 1) {
+    ret = ret.flatMap((row) => Array<string>(_y).fill(row))
+  }
+  return ret
+}
+
 /**
  * `Bitmap` object
  *
@@ -123,7 +249,7 @@ export class Bitmap {
     if (rows.some((r) => r.length !== rows[0].length)) {
       throw new Error('Bitmap rows have different lengths')
     }
-    return new Bitmap(rows)
+    return newBitmap(rows)
   }
 
   /**
@@ -138,7 +264,7 @@ export class Bitmap {
     if (w < 0 || h < 0) {
       throw new RangeError('Bitmap size must not be negative')
     }
-    return new Bitmap(Array.from({ length: h }, () => '0'.repeat(w)))
+    return newBitmap(Array.from({ length: h }, () => '0'.repeat(w)))
   }
 
   /**
@@ -210,113 +336,7 @@ export class Bitmap {
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/bitmap#clone}
    */
   clone(): Bitmap {
-    return new Bitmap([...this.bindata])
-  }
-
-  private static __crop_string(
-    s: string,
-    start: number,
-    length: number
-  ): string {
-    let stemp = s
-    const l = s.length
-    let left = 0
-    if (start < 0) {
-      left = 0 - start
-      stemp = stemp.padStart(left + l, '0')
-    }
-    if (start + length > l) {
-      stemp = stemp.padEnd(start + length - l + stemp.length, '0')
-    }
-    const newstart = start + left
-    return stemp.slice(newstart, newstart + length)
-  }
-
-  private static __string_offset_concat(
-    s1: string,
-    s2: string,
-    offset?: number | null
-  ): string {
-    const _offset = offset ?? 0
-    if (_offset === 0) {
-      return s1 + s2
-    }
-    const len1 = s1.length
-    const len2 = s2.length
-    const s2start = len1 + _offset
-    const s2end = s2start + len2
-    const finalstart = Math.min(0, s2start)
-    const finalend = Math.max(len1, s2end)
-    const news1 = Bitmap.__crop_string(s1, finalstart, finalend - finalstart)
-    const news2 = Bitmap.__crop_string(
-      s2,
-      finalstart - s2start,
-      finalend - finalstart
-    )
-    let ret = ''
-    for (let i = 0; i < news1.length; i++) {
-      ret += ORed(news1[i], news2[i])
-    }
-    return ret
-  }
-
-  private static __listofstr_offset_concat(
-    list1: string[],
-    list2: string[],
-    offset?: number | null
-  ): string[] {
-    const _offset = offset ?? 0
-    let s1: string, s2: string
-    if (_offset === 0) {
-      return list1.concat(list2)
-    }
-    const width = list1.length > 0 ? list1[0].length : (list2[0]?.length ?? 0)
-    const len1 = list1.length
-    const len2 = list2.length
-    const s2start = len1 + _offset
-    const s2end = s2start + len2
-    const finalstart = Math.min(0, s2start)
-    const finalend = Math.max(len1, s2end)
-    const retlist: string[] = []
-    for (let i = finalstart; i < finalend; i++) {
-      if (i < 0 || i >= len1) {
-        s1 = '0'.repeat(width)
-      } else {
-        s1 = list1[i]
-      }
-      if (i < s2start || i >= s2end) {
-        s2 = '0'.repeat(width)
-      } else {
-        s2 = list2[i - s2start]
-      }
-      let row = ''
-      for (let j = 0; j < s1.length; j++) {
-        row += ORed(s1[j], s2[j])
-      }
-      retlist.push(row)
-    }
-    return retlist
-  }
-
-  private static __crop_bitmap(
-    bitmap: string[],
-    w: number,
-    h: number,
-    xoff: number,
-    yoff: number
-  ): string[] {
-    let bn
-    const retlist = []
-    const l = bitmap.length
-    for (let n = 0; n < h; n++) {
-      bn = l - yoff - h + n
-      if (bn < 0 || bn >= l) {
-        retlist.push('0'.repeat(w))
-      } else {
-        retlist.push(Bitmap.__crop_string(bitmap[bn], xoff, w))
-      }
-    }
-    return retlist
+    return newBitmap([...this.bindata])
   }
 
   /**
@@ -334,7 +354,7 @@ export class Bitmap {
   crop(w: number, h: number, xoff?: number | null, yoff?: number | null): this {
     const _xoff = xoff ?? 0
     const _yoff = yoff ?? 0
-    this.bindata = Bitmap.__crop_bitmap(this.bindata, w, h, _xoff, _yoff)
+    this.bindata = cropBitmap(this.bindata, w, h, _xoff, _yoff)
     return this
   }
 
@@ -391,7 +411,7 @@ export class Bitmap {
     const _align = options.align ?? 1
     const _offsetlist = options.offsetlist ?? null
     if (bitmaplist.length === 0) {
-      return new Bitmap([])
+      return newBitmap([])
     }
     let bd, ireal, maxsize, offset, ret: string[], w, xoff
     if (_direction > 0) {
@@ -399,10 +419,10 @@ export class Bitmap {
       ret = Array(maxsize).fill('')
       const stroffconcat = (s1: string, s2: string, offset: number): string => {
         if (_direction === 1) {
-          return Bitmap.__string_offset_concat(s1, s2, offset)
+          return stringOffsetConcat(s1, s2, offset)
         } else {
           // if (_direction === 2)
-          return Bitmap.__string_offset_concat(s2, s1, offset)
+          return stringOffsetConcat(s2, s1, offset)
         }
       }
       for (let i = 0; i < maxsize; i++) {
@@ -467,13 +487,13 @@ export class Bitmap {
           } else {
             xoff = w - maxsize
           }
-          bd = this.__crop_bitmap(bd, maxsize, bitmap.height(), xoff, 0)
+          bd = cropBitmap(bd, maxsize, bitmap.height(), xoff, 0)
         }
         if (_direction === 0) {
-          ret = Bitmap.__listofstr_offset_concat(ret, bd, offset)
+          ret = listofstrOffsetConcat(ret, bd, offset)
         } else {
           // if (_direction === -1)
-          ret = Bitmap.__listofstr_offset_concat(bd, ret, offset)
+          ret = listofstrOffsetConcat(bd, ret, offset)
         }
       }
     }
@@ -502,35 +522,12 @@ export class Bitmap {
   ): this {
     const { direction, align, offset } = options
     const _offset = offset ?? 0
-    this.bindata = Bitmap.concatall([this, bitmap], {
+    this.bindata = concatallBitmaps([this, bitmap], {
       direction,
       align,
       offsetlist: [_offset],
     }).bindata
     return this
-  }
-
-  private static __enlarge_bindata(
-    bindata: string[],
-    x?: number | null,
-    y?: number | null
-  ): string[] {
-    const _x = x ?? 1
-    const _y = y ?? 1
-    let ret = [...bindata]
-
-    if (_x > 1) {
-      ret = ret.map((v) =>
-        v
-          .split('')
-          .map((c) => c.repeat(_x))
-          .join('')
-      )
-    }
-    if (_y > 1) {
-      ret = ret.flatMap((row) => Array<string>(_y).fill(row))
-    }
-    return ret
   }
 
   /**
@@ -544,7 +541,7 @@ export class Bitmap {
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/bitmap#enlarge}
    */
   enlarge(x?: number, y?: number): this {
-    this.bindata = Bitmap.__enlarge_bindata(this.bindata, x, y)
+    this.bindata = enlargeBindata(this.bindata, x, y)
     return this
   }
 
@@ -1209,3 +1206,10 @@ export class Bitmap {
     return out
   }
 }
+
+/** `new Bitmap(bindata)` (outside the class body, see the helpers above) */
+const newBitmap = (bindata: string[]): Bitmap => new Bitmap(bindata)
+
+/** `Bitmap.concatall` (outside the class body, see the helpers above) */
+const concatallBitmaps: typeof Bitmap.concatall = (bitmaplist, options) =>
+  Bitmap.concatall(bitmaplist, options)

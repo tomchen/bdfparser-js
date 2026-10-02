@@ -58,6 +58,19 @@ jobs:
         run: bun run build
       - name: Smoke-test the CLI
         run: node dist/cli.js info test/fonts/spec_example_fixed.bdf
+      # the library must give the same bytes in every runtime (their
+      # TextDecoder implementations differ, e.g. windows-1252 in Node.js 20)
+      - name: Check the build in Node.js
+        run: node tools/check-runtime.mjs
+      - name: Check the build in Bun
+        run: bun tools/check-runtime.mjs
+      - uses: denoland/setup-deno@v2
+        if: matrix.node == '24'
+        with:
+          deno-version: v2.x
+      - name: Check the build in Deno
+        if: matrix.node == '24'
+        run: deno run --allow-read tools/check-runtime.mjs
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         if: matrix.os == 'ubuntu-latest' && matrix.node == '24'

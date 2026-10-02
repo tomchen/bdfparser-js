@@ -286,12 +286,14 @@ const toU8 = (data: Uint8Array | ArrayBuffer): Uint8Array => {
   if (data instanceof Uint8Array) {
     return data
   }
-  if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data)
-  }
   if (ArrayBuffer.isView(data)) {
     const v = data as ArrayBufferView
     return new Uint8Array(v.buffer, v.byteOffset, v.byteLength)
+  }
+  // not `instanceof`: also accept ArrayBuffers from other realms (iframes,
+  // workers' transferred buffers, `vm` contexts)
+  if (Object.prototype.toString.call(data) === '[object ArrayBuffer]') {
+    return new Uint8Array(data)
   }
   throw new TypeError('PCF data must be a Uint8Array or an ArrayBuffer')
 }

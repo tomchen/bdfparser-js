@@ -25,6 +25,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { runInNewContext } from 'node:vm'
 import { join } from 'node:path'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import readlineiter from 'readlineiter'
@@ -1113,6 +1114,16 @@ describe('readPcf', () => {
     big.set(p, 7)
     expect(model(readPcf(big.subarray(7, 7 + p.length)))).toEqual(m)
     expect(() => readPcf('PCF' as unknown as Uint8Array)).toThrow(TypeError)
+    // ArrayBuffer / DataView from another realm (iframe, vm context)
+    const foreign = runInNewContext('new ArrayBuffer(n)', {
+      n: p.length,
+    }) as ArrayBuffer
+    new Uint8Array(foreign).set(p)
+    expect(foreign instanceof ArrayBuffer).toBe(false)
+    expect(model(readPcf(foreign))).toEqual(m)
+    expect(
+      model(readPcf(new DataView(p.slice().buffer) as unknown as Uint8Array))
+    ).toEqual(m)
   })
 
   test('missing optional tables', async () => {

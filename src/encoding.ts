@@ -414,9 +414,19 @@ const isGLPair = (cp: number): boolean => {
 const isValidCp = (cp: number): boolean =>
   Number.isInteger(cp) && cp >= 0 && cp <= 0xffffffff
 
+/**
+ * windows-1252 bytes 0x80–0x9F (WHATWG index; the rest is ISO 8859-1). Built
+ * in because some runtimes' `TextDecoder('windows-1252')` (e.g. Node.js 20)
+ * decode it as ISO 8859-1.
+ */
+const CP1252_80_9F =
+  '\u20ac\x81\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\x8d\u017d\x8f' +
+  '\x90\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\x9d\u017e\u0178'
+
 type CodecKind =
   | { kind: 'unicode' }
   | { kind: 'latin1' }
+  | { kind: 'cp1252' }
   | { kind: 'ascii' }
   | { kind: 'jisx0201' }
   | { kind: 'decoder'; decoder: TextDecoder; dbcs: boolean }
@@ -453,6 +463,9 @@ const resolveKind = (c: string, iconv?: IconvLike): CodecKind => {
     } else {
       label = c
     }
+  }
+  if (label === 'windows-1252' && iconv === undefined) {
+    return { kind: 'cp1252' }
   }
   const decoder = getDecoder(label)
   if (iconv !== undefined) {
@@ -526,6 +539,22 @@ export const getCodec = (
         return n < 0x100 ? n : null
       }
       break
+    case 'cp1252':
+      rawCp2char = (cp) =>
+        cp >= 0x80 && cp < 0xa0
+          ? CP1252_80_9F[cp - 0x80]
+          : cp < 0x100
+            ? String.fromCharCode(cp)
+            : null
+      rawChar2cp = (char) => {
+        const n = char.codePointAt(0) as number
+        if (n < 0x80 || (n >= 0xa0 && n < 0x100)) {
+          return n
+        }
+        const i = CP1252_80_9F.indexOf(char)
+        return i === -1 ? null : 0x80 + i
+      }
+      break
     case 'ascii':
       rawCp2char = (cp) => (cp < 0x80 ? String.fromCharCode(cp) : null)
       rawChar2cp = (char) => {
@@ -550,8 +579,21 @@ export const getCodec = (
       break
     case 'decoder': {
       const { decoder, dbcs } = kind
-      rawCp2char = (cp) => decodeUnit(decoder, cpToBytes(cp))
-      rawChar2cp = (char) => getReverseTable(decoder, dbcs).get(char) ?? null
+      // WHATWG (and Python) decode 0x00–0x7F of the CJK multi-byte encodings
+      // as ASCII, but Node's ICU-based Shift_JIS decoder swaps 0x1A / 0x1C /
+      // 0x7F: map the ASCII range directly so all runtimes agree
+      rawCp2char = (cp) =>
+        dbcs && cp < 0x80
+          ? String.fromCharCode(cp)
+          : decodeUnit(decoder, cpToBytes(cp))
+      rawChar2cp = (char) => {
+        const n = char.charCodeAt(0)
+        if (dbcs && n < 0x80) {
+          return n
+        }
+        const cp = getReverseTable(decoder, dbcs).get(char) ?? null
+        return dbcs && cp !== null && cp < 0x80 ? null : cp
+      }
       break
     }
     case 'iconv': {

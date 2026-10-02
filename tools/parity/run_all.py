@@ -164,7 +164,7 @@ def main() -> int:
     ap.add_argument('--skip-all', action='store_true')
     ap.add_argument('--skip-corpus', action='store_true')
     ap.add_argument('--skip-probes', action='store_true')
-    ap.add_argument('--heavy', action='store_true', help='also run probes that allocate gigabytes (K15)')
+    ap.add_argument('--heavy', action='store_true', help='also run the heavy probes (none at the moment)')
     a = ap.parse_args()
 
     out = Path(a.out).resolve()
@@ -202,8 +202,10 @@ def main() -> int:
         r = sh(f'{shlex.quote(sys.executable)} tools/parity/compare.py tables {out / "tables_py.json"} {out / "tables_js.json"} '
                f'{agreed} --report {out / "tables_report.txt"}', capture_output=True, text=True, check=True)
         last = r.stdout.strip().splitlines()[-1]
+        ndiff = int(last.split(' compared, ')[1].split(' ')[0])
         print(f'[tables] {last} ({time.time() - ts:.1f}s) -> {out / "tables_report.txt"}')
-        summaries.append({'phase': 'tables', 'summary': last, 'seconds': round(time.time() - ts, 1)})
+        # every differing table is a NEW divergence (SPEC-v3 §11.1: table-exact)
+        summaries.append({'phase': 'tables', 'summary': last, 'new': ndiff, 'seconds': round(time.time() - ts, 1)})
     agreed_opt = f' --agreed {agreed}' if agreed.exists() else ''
     tables_opt = agreed if agreed.exists() else None
 
@@ -230,7 +232,9 @@ def main() -> int:
             status.append({'id': c['id'], 'expect': c['expect'], 'diverges': dv, 'ok': ok, 'desc': c['desc']})
             print(f"      {'ok ' if ok else '!! '} {c['id']:30s} {st}")
         (out / 'probes_status.json').write_text(json.dumps(status, indent=1))
-        summ['new'] = 0  # probe divergences are expected; status changes are reported above
+        # expected divergences are not NEW; a regression probe ('agree') that
+        # diverges again is
+        summ['new'] = sum(1 for x in status if x['expect'] == 'agree' and x['diverges'])
         summ['probe_changes'] = sum(1 for x in status if not x['ok'])
         summaries.append(summ)
     if not a.skip_corpus:

@@ -173,7 +173,9 @@
  */
 
 import { isUnicodeCharset, sanitizeCharset } from './encoding'
+import { pyStrip } from './fmt'
 import { Font } from './Font'
+import { propEntries } from './props'
 import { defaultglyphname } from './Glyph'
 import { BdfHeaders, GlyphMetaInFont } from './types'
 
@@ -227,6 +229,15 @@ type Metric = {
 }
 
 const toI32 = (v: number): number => v | 0
+
+/** integer property values are written as 32-bit words (signed or unsigned) */
+const checkProp = (name: string, v: number): void => {
+  if (v < -0x80000000 || v > 0xffffffff) {
+    throw new RangeError(
+      `PCF: property ${name} value ${v} does not fit in 32 bits`
+    )
+  }
+}
 const roundUp4 = (n: number): number => (n + 3) & ~3
 
 /** libXfont `BYTES_PER_ROW(bits, pad)` (pad 1, 2, 4 or 8 bytes) */
@@ -590,7 +601,7 @@ const glyphBits = (
   const widthHexChars = bytesPerRow(w, 1)
   const lastMask = (0xff << (8 - (w & 7))) & 0xff
   for (let row = 0; row < h; row++) {
-    let line = utf8(String(hexdata[row] ?? '').trim())
+    let line = utf8(pyStrip(String(hexdata[row] ?? '')))
     if (line.length & 1) {
       const l2 = new Uint8Array(line.length + 1)
       l2.set(line)
@@ -718,10 +729,9 @@ export function writePcf(
       'PCF scanunit must not exceed glyphpad when bitorder differs from byteorder'
     )
   }
-  const h = font.headers as Partial<BdfHeaders> | undefined
-  if (!h || h.fbbx === undefined) {
-    throw new Error('Font is not loaded')
-  }
+  // missing headers get bdftopcf-like defaults (like the Python library: a
+  // font without FONTBOUNDINGBOX, even an empty one, is written)
+  const h = (font.headers ?? {}) as Partial<BdfHeaders>
   const format =
     (padIndex(scan) << 4) |
     ((bitMSB ? 1 : 0) << 3) |
@@ -734,8 +744,8 @@ export function writePcf(
   let fontDescent: number | null = null
   let defaultCh = 0
   const seen = new Map<string, WProp>()
-  for (const [key, value] of Object.entries(font.props)) {
-    if (key === 'comment' || value === null || value === undefined) {
+  for (const [key, value] of propEntries(font.props, font._propnames)) {
+    if (value === null || value === undefined) {
       continue
     }
     if (typeof value !== 'string' && typeof value !== 'number') {
@@ -747,6 +757,9 @@ export function writePcf(
       continue
     }
     const isString = !isInt(value)
+    if (!isString) {
+      checkProp(name, value as number)
+    }
     if (name === 'FONT_ASCENT' || name === 'FONT_DESCENT') {
       if (!isString) {
         if (name === 'FONT_ASCENT') {
@@ -766,7 +779,7 @@ export function writePcf(
     const p: WProp = {
       name,
       isString,
-      value: isString ? String(value) : toI32(value as number),
+      value: isString ? String(value) : (value as number),
     }
     props.push(p)
     seen.set(name, p)
@@ -800,17 +813,34 @@ export function writePcf(
   gen(
     'POINT_SIZE',
     false,
-    toI32(Math.trunc(Math.fround(Number(h.pointsize) || 0) * 10))
+    Math.trunc(Math.fround(Number(h.pointsize) || 0) * 10)
   )
   gen('FONT', true, String(h.fontname ?? ''))
   gen('WEIGHT', false, -1)
   if (xres === yres) {
-    gen('RESOLUTION', false, toI32(Math.trunc((xres * 100) / 72.27)))
+    gen('RESOLUTION', false, Math.trunc((xres * 100) / 72.27))
   }
-  gen('RESOLUTION_X', false, toI32(xres))
-  gen('RESOLUTION_Y', false, toI32(yres))
+  gen('RESOLUTION_X', false, xres)
+  gen('RESOLUTION_Y', false, yres)
   gen('X_HEIGHT', false, -1)
   gen('QUAD_WIDTH', false, -1)
+
+  // range guards before any bitmap is built (SPEC-v3 §11.2): property values
+  // must fit their 32-bit words; the font ascent / descent (16-bit in the X
+  // font info and in the metrics of a terminal font's character cell) and the
+  // cell height must fit 16 bits
+  for (const p of props) {
+    if (!p.isString) {
+      checkProp(p.name, p.value as number)
+    }
+  }
+  for (const v of [fontAscent, fontDescent, fontAscent + fontDescent]) {
+    if (v < MINSHORT || v > MAXSHORT) {
+      throw new RangeError(
+        `PCF: FONT_ASCENT ${fontAscent} / FONT_DESCENT ${fontDescent} do not fit in 16 bits`
+      )
+    }
+  }
 
   /* ---- glyphs (bdfReadCharacters) ---- */
   const hdwx0 = isInt(h.dwx0) ? h.dwx0 : undefined
@@ -828,7 +858,9 @@ export function writePcf(
 
   const addGlyph = (meta: GlyphMetaInFont, enc: number): void => {
     const nameBytes = scanToken(String(meta[0] ?? ''), 99)
-    const label = new TextDecoder().decode(nameBytes)
+    const label = new TextDecoder('utf-8', { ignoreBOM: true }).decode(
+      nameBytes
+    )
     const bw = meta[2] || 0
     const bh = meta[3] || 0
     const bl = meta[4] || 0
@@ -1277,7 +1309,7 @@ type RAccel = {
 /** UTF-8, falling back to Latin-1 for invalid UTF-8 */
 const decodeBytes = (b: Uint8Array): string => {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(b)
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(b)
   } catch {
     let s = ''
     for (const c of b) {

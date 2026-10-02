@@ -1,5 +1,5 @@
 import { Bitmap } from './Bitmap'
-import { EncodingOptions, Font, LoadOptions } from './Font'
+import { EncodingOptions, Font, LoadOptions, URLLike } from './Font'
 import { Glyph } from './Glyph'
 import { GlyphMeta } from './types'
 
@@ -11,7 +11,7 @@ export type FontSource =
   | Uint8Array
   | ArrayBuffer
   | ArrayBufferView
-  | URL
+  | URLLike
 
 const isBinary = (
   s: unknown
@@ -19,9 +19,15 @@ const isBinary = (
   ArrayBuffer.isView(s) ||
   Object.prototype.toString.call(s) === '[object ArrayBuffer]'
 
-const isURL = (s: unknown): s is URL =>
-  typeof URL !== 'undefined' &&
-  (s instanceof URL || Object.prototype.toString.call(s) === '[object URL]')
+const isURL = (s: unknown): s is URLLike =>
+  (typeof URL !== 'undefined' &&
+    (s instanceof URL ||
+      Object.prototype.toString.call(s) === '[object URL]')) ||
+  (typeof s === 'object' &&
+    s !== null &&
+    typeof (s as { href?: unknown }).href === 'string' &&
+    !(Symbol.iterator in s) &&
+    !(Symbol.asyncIterator in s))
 
 /**
  * Create and load a font in one call, then apply encoding options.
@@ -30,7 +36,7 @@ const isURL = (s: unknown): s is URL =>
  * - an (async) iterable of lines, e.g. `readlineiter(path)` (Node) or `fetchline(url)` (browser) → BDF;
  * - a `string` → BDF text;
  * - a `Uint8Array` / `ArrayBuffer` → BDF, PCF, gzip-compressed PCF/BDF or TrueType (auto-detected);
- * - a `URL` → fetched with `fetch` (any of the formats above).
+ * - a `URL` (or any object with a string `href`) → fetched with `fetch` (any of the formats above).
  *
  * @param source - Font source
  * @param encodingOptions - Encoding options (see `Font.encoding`)

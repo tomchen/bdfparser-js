@@ -17,8 +17,11 @@
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
+// the CLI always converts multi-byte charsets exactly (SPEC-v3 §11.1)
+import './cjk'
 import { VERSION } from './constants'
 import { Font } from './Font'
+import { propEntries } from './props'
 import { PropValue } from './types'
 import { setWarningHandler } from './warn'
 
@@ -244,7 +247,14 @@ const cmdInfo = (args: Args, io: CliIO): number => {
     `charset: ${font.charset}`,
     'properties:',
   ]
-  for (const [k, v] of Object.entries(font.props)) {
+  const entries: [string, PropValue | string[] | undefined][] = propEntries(
+    font.props,
+    font._propnames
+  )
+  if (font.props.comment !== undefined) {
+    entries.unshift(['comment', font.props.comment])
+  }
+  for (const [k, v] of entries) {
     const name =
       k === 'comment' ? 'COMMENT' : (font._propnames.get(k) ?? k.toUpperCase())
     lines.push(`  ${name} ${propvalue(v)}`.trimEnd())

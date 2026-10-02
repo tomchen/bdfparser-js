@@ -20,24 +20,42 @@
         "default": "./dist/index.cjs"
       }
     },
+    "./cjk": {
+      "import": {
+        "types": "./dist/cjk.d.ts",
+        "default": "./dist/cjk.js"
+      },
+      "require": {
+        "types": "./dist/cjk.d.cts",
+        "default": "./dist/cjk.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "bin": {
     "bdfparser": "./dist/cli.js"
   },
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/cjk.js",
+    "./dist/cjk.cjs",
+    "./dist/bdfparser.global.js",
+    "./dist/bdfparser-cjk.global.js",
+    "./src/cjk.ts"
+  ],
   "files": [
     "dist"
   ],
   "scripts": {
     "prepare": "husky",
     "build": "tsup",
+    "gen:charsets": "cd ../bdfparser && uv run python ../bdfparser-js/tools/gen_charsets.py",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write . && eslint --fix .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
+    "parity": "python3 tools/parity/run_all.py",
     "package": "bun run build && npm pack",
     "addscope": "node tools/packagejson.cjs name @tomchen/bdfparser"
   },

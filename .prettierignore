@@ -6,3 +6,6 @@ bun.lock
 test/fonts
 test/fixtures
 *.md
+src/charsets/table.ts
+src/charsets/sbcs.ts
+src/charsets/cjk-data.ts

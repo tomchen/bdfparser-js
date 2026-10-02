@@ -270,7 +270,7 @@ def cmp_tables(pyp, jsp, outp, report=None):
             lines.append(f'      char2cp(U+{k:04X} {chr(k)!r}): py={fa} js={fb}')
     Path(outp).write_text(json.dumps(agreed))
     text = '\n'.join(lines)
-    text += f'\n{len(P)} charset tables compared, {ndiff} differ (codec table variants, see README.md)'
+    text += f'\n{len(P)} charset tables compared, {ndiff} differ (SPEC-v3 §11.1: tables must be exact, see README.md)'
     print(text)
     if report:
         Path(report).write_text(text + '\n')

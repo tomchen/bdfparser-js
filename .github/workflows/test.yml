@@ -52,10 +52,15 @@ jobs:
         run: bun run lint
       - name: Typecheck
         run: bun run typecheck
+      # vitest 5 needs Node.js >= 22.12: the full suite runs on Node.js 22 and
+      # 24; on Node.js 20 only the built library is checked (below)
       - name: Test
+        if: matrix.node != '20'
         run: bun run test:cov
       - name: Build
         run: bun run build
+      - name: Check the published type declarations (no DOM / Node.js types)
+        run: node tools/check-dts.mjs
       - name: Smoke-test the CLI
         run: node dist/cli.js info test/fonts/spec_example_fixed.bdf
       # the library must give the same bytes in every runtime (their

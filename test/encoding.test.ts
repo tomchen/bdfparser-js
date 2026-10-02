@@ -450,25 +450,23 @@ ${cps
     expect(getCodec('shiftjis').char2cp('ｱ')).toBe(0xb1)
   })
 
-  test('windows-1252 does not depend on the runtime TextDecoder', async () => {
-    // Node.js 20's TextDecoder('windows-1252') decodes as ISO 8859-1
+  test('single-byte charsets do not depend on the runtime TextDecoder', async () => {
+    // e.g. Node.js 20's TextDecoder('windows-1252') decodes as ISO 8859-1:
+    // the tables are generated from Python's codecs (SPEC-v3 §11.1)
     const Real = globalThis.TextDecoder
-    class Broken1252 extends Real {
+    class Broken extends Real {
       constructor(label?: string, options?: TextDecoderOptions) {
-        super(
-          label?.toLowerCase() === 'windows-1252' ? 'iso-8859-2' : label,
-          options
-        )
+        super(label === 'utf-8' ? label : 'iso-8859-2', options)
       }
     }
     vi.resetModules()
-    globalThis.TextDecoder = Broken1252 as typeof TextDecoder
+    globalThis.TextDecoder = Broken as typeof TextDecoder
     try {
       const enc = await import('../src/encoding')
       const c = enc.getCodec('cp1252')
       expect(c.cp2char(0x80)).toBe('€')
       expect(c.cp2char(0x9f)).toBe('Ÿ')
-      expect(c.cp2char(0x81)).toBe('\x81') // WHATWG: C1 control
+      expect(c.cp2char(0x81)).toBeNull() // undefined in Python's cp1252
       expect(c.cp2char(0xe9)).toBe('é')
       expect(c.cp2char(0x41)).toBe('A')
       expect(c.cp2char(0x100)).toBeNull()
@@ -476,10 +474,18 @@ ${cps
       expect(c.char2cp('Ÿ')).toBe(0x9f)
       expect(c.char2cp('é')).toBe(0xe9)
       expect(c.char2cp('\x80')).toBeNull()
+      expect(c.char2cp('\x81')).toBeNull()
       expect(c.char2cp('Ā')).toBeNull()
-      // every byte round-trips
-      for (let b = 0; b < 0x100; b++) {
-        expect(c.char2cp(c.cp2char(b) as string)).toBe(b)
+      // every mapped byte round-trips
+      for (const cs of ['cp1252', 'koi8r', 'iso885911', 'cp437', 'macroman']) {
+        const k = enc.getCodec(cs)
+        expect(k.exact).toBe(true)
+        for (let b = 0; b < 0x100; b++) {
+          const ch = k.cp2char(b)
+          if (ch !== null) {
+            expect(k.char2cp(ch), `${cs} ${b}`).toBe(b)
+          }
+        }
       }
     } finally {
       globalThis.TextDecoder = Real
@@ -577,27 +583,60 @@ ${cps
     expect(getCodec('gb2312').gl).toBe(false)
     expect(getCodec('iso2022cn').gl).toBe(true)
     expect(getCodec('utf-16le').unicode).toBe(true)
-    expect(getCodec('latin2').cp2char(0xe8)).toBe('č')
+    expect(getCodec('iso-8859-2').cp2char(0xe8)).toBe('č')
     expect(getCodec('iso88593').cp2char(0xa1)).toBe('Ħ')
+    // not a key of the canonical table (Python): unknown, Unicode identity
+    expect(getCodec('latin2').known).toBe(false)
+    expect(getCodec('latin2').cp2char(0xe8)).toBe('è')
     expect(detectGL('0', [])).toBe(true)
     expect(detectGL(0, [])).toBe(true)
+    expect(detectGL(' 0\t', [])).toBe(true)
+    expect(detectGL('\u00a00', [])).toBe(false) // ASCII whitespace only
     expect(detectGL(null, [0x41, 0xb0a1, 0x3021])).toBe(true)
     expect(detectGL(undefined, [0x41, 0xb0a1])).toBe(false)
     expect(detectGL('1', [0x41])).toBe(false)
-    // one unit decoding to two code points (WHATWG); Node's ICU maps it to a PUA char
-    expect(['Ê̄', '\uf325']).toContain(cp2char(0x8862, 'big5hkscs'))
+  })
+
+  test('multi-byte charsets without bdfparser/cjk: restricted TextDecoder, one warning', () => {
+    // this test file does not import bdfparser/cjk
+    const c = getCodec('cp936')
+    expect(c.exact).toBe(false)
+    expect(warnings).toEqual([
+      "The exact tables of the charset 'cp936' are not loaded: using the runtime's TextDecoder, results may differ from the Python bdfparser and between runtimes (import 'bdfparser/cjk' or load bdfparser-cjk.global.js for exact conversions)",
+    ])
+    getCodec('cp936')
+    expect(warnings.length).toBe(1) // once per charset
+    expect(c.cp2char(0xc4e3)).toBe('你')
+    expect(c.char2cp('你')).toBe(0xc4e3)
     expect(cp2char(0x4141, 'gbk')).toBeNull()
     expect(cp2char(0x81, 'gbk')).toBeNull()
     expect(cp2char(0x41, 'gbk')).toBe('A')
-    expect(char2cp('𠀀', 'gb18030')).toBeNull()
+    expect(cp2char(0x8130, 'gbk')).toBeNull() // trail byte out of range
+    expect(cp2char(0x81308130, 'gbk')).toBeNull()
+    expect(cp2char(0x81308130, 'gb18030')).toBe('\x80')
+    expect(char2cp('𠀀', 'gb18030')).toBeNull() // no 4-byte encoder
+    // big5hkscs 0x8862 is two code points (WHATWG); Node's ICU maps it to a
+    // PUA character: runtime-dependent without the exact tables
+    expect([null, '\uf325']).toContain(cp2char(0x8862, 'big5hkscs'))
+    // no TextDecoder for Johab: ASCII only
+    expect(cp2char(0x41, 'johab')).toBe('A')
+    expect(cp2char(0x8861, 'johab')).toBeNull()
+    expect(char2cp('가', 'johab')).toBeNull()
+  })
+
+  test('multi-byte charsets without bdfparser/cjk: iconv-lite instead of TextDecoder', () => {
     expect(char2cp('𠀀', 'gb18030', iconv)).toBe(0x95328236)
     expect(cp2char(0x95328236, 'gb18030', iconv)).toBe('𠀀')
     expect(cp2char(0x4141, 'gbk', iconv)).toBeNull()
     expect(cp2char(0x81, 'gbk', iconv)).toBeNull()
+    expect(char2cp('a', 'gbk', iconv)).toBe(0x61)
+    expect(char2cp('你', 'big5', iconv)).toBe(0xa741)
+    expect(char2cp('€', 'gbk', iconv)).toBeNull() // '?' substitution
+    // single-byte charsets always use the tables
     expect(char2cp('中', 'cp1252', iconv)).toBeNull()
     expect(char2cp('?', 'cp1252', iconv)).toBe(0x3f)
-    expect(char2cp('a', 'cp437', iconv)).toBe(0x61) // only iconv knows cp437
-    expect(char2cp('a', 'cp437')).toBe(0x61) // unknown: Unicode identity
+    expect(char2cp('a', 'cp437', iconv)).toBe(0x61)
+    expect(char2cp('a', 'cp437')).toBe(0x61) // cp437 is in the table now
     const throwing = {
       encode: () => {
         throw new Error('x')
@@ -609,15 +648,17 @@ ${cps
         throw new Error('x')
       },
     }
-    expect(char2cp('a', 'cp1252', throwing)).toBe(0x61) // falls back to TextDecoder
+    // encodingExists throws: TextDecoder
+    expect(char2cp('你', 'big5hkscs', throwing)).toBe(0xa741)
     const noExists = { encode: throwing.encode, decode: throwing.decode }
-    expect(char2cp('a', 'cp1252', noExists)).toBeNull()
-    expect(cp2char(0x61, 'cp1252', noExists)).toBeNull()
+    expect(char2cp('a', 'euckr', noExists)).toBe(0x61) // ASCII
+    expect(char2cp('가', 'euckr', noExists)).toBeNull()
+    expect(cp2char(0xb0a1, 'euckr', noExists)).toBeNull()
     const longEnc = {
-      encode: () => new Uint8Array(5),
-      decode: () => '',
+      encode: () => new Uint8Array(3),
+      decode: () => 'ab',
     }
-    expect(char2cp('a', 'cp1252', longEnc)).toBeNull()
-    expect(cp2char(0x61, 'cp1252', longEnc)).toBeNull()
+    expect(char2cp('가', 'cp949', longEnc)).toBeNull()
+    expect(cp2char(0xb0a1, 'cp949', longEnc)).toBeNull()
   })
 })

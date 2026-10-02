@@ -5,10 +5,12 @@ export { Glyph, defaultglyphname, type SetbitmapOptions } from './Glyph'
 export {
   Font,
   type EncodingOptions,
+  type FetchInit,
   type FontCreateOptions,
   type LoadOptions,
   type NewglyphOptions,
   type SvgFontOptions,
+  type URLLike,
 } from './Font'
 export * from './shortcuts'
 export {
@@ -21,8 +23,13 @@ export {
   getCodec,
   isUnicodeCharset,
   detectGL,
+  charsetKeys,
+  registerCharsetTables,
   type CharsetCodec,
+  type CharsetKind,
+  type CharsetTables,
   type IconvLike,
+  type TableSpec,
 } from './encoding'
 export { BDFParseError } from './errors'
 export {

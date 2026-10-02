@@ -59,8 +59,9 @@
  * @module
  */
 
+import { fmtnum } from './fmt'
 import { Font } from './Font'
-import { defaultglyphname } from './Glyph'
+import { defaultglyphname, hexRowError } from './Glyph'
 import {
   bitmapContours,
   Contour,
@@ -68,15 +69,13 @@ import {
   DotShape,
   rasterize,
 } from './outline'
+import { newProps, propEntries } from './props'
 import type { BdfHeaders, GlyphMetaInFont, Props } from './types'
 
 // ---------------------------------------------------------------------------
 // shared helpers
 
 const rnd = (v: number): number => Math.floor(v + 0.5)
-
-/** `fmtnum`: integer string if integral, else shortest round-trip repr */
-const fmtnum = (n: number): string => String(n)
 
 /** `fmtver`: integral → "{n}.0", else shortest repr */
 const fmtver = (n: number): string =>
@@ -124,7 +123,9 @@ const cpToUnicode = (font: Font, cp: number): number | null => {
   if (chars.length !== 1) {
     return null
   }
-  return chars[0].codePointAt(0) as number
+  const u = chars[0].codePointAt(0) as number
+  // never map surrogates (SPEC-v3 §11.5)
+  return u >= 0xd800 && u <= 0xdfff ? null : u
 }
 
 /** Draw the glyph's own bounding box (= `Glyph.draw(1)`), robust for wide glyphs */
@@ -138,10 +139,12 @@ const drawBb = (meta: GlyphMetaInFont): string[] => {
   const rows: string[] = []
   for (let i = 0; i < bbh; i++) {
     const hex = hexdata[i] ?? ''
+    if (!/^[0-9A-Fa-f]*$/.test(hex)) {
+      throw hexRowError(meta[0], meta[1], i, hex)
+    }
     let bits = ''
     for (let j = 0; j < hex.length && bits.length < bbw; j++) {
-      const v = parseInt(hex[j], 16)
-      bits += (Number.isNaN(v) ? 0 : v).toString(2).padStart(4, '0')
+      bits += parseInt(hex[j], 16).toString(2).padStart(4, '0')
     }
     rows.push(bits.slice(0, bbw).padEnd(bbw, '0'))
   }
@@ -975,12 +978,18 @@ export const writeTtf = (
 
   // ---- BDFP
   if (metadata) {
-    const propsObj: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(props)) {
-      if (k !== 'comment' && v !== undefined) propsObj[k] = v
-    }
-    const propnamesObj: Record<string, string> = {}
-    for (const [k, v] of font._propnames) propnamesObj[k] = v
+    // objects written key by key: integer-like property names keep their
+    // position (JSON.stringify of an object would move them first)
+    const jsonObj = (entries: [string, unknown][]): string =>
+      '{' +
+      entries
+        .map(([k, v]) => JSON.stringify(k) + ':' + JSON.stringify(v))
+        .join(',') +
+      '}'
+    const propsJson = jsonObj(
+      propEntries(props, font._propnames).filter(([, v]) => v !== undefined)
+    )
+    const propnamesJson = jsonObj([...font._propnames])
     // storage order: font.glyphs insertion order, then font.unencoded
     const glyphList: unknown[][] = []
     for (const [cp, meta] of font.glyphs) {
@@ -1001,8 +1010,8 @@ export const writeTtf = (
       `,"shape":${JSON.stringify(shape)}` +
       `,"dotsize":${fmtnum(dotsize)}` +
       `,"headers":${JSON.stringify(jsonHeaders(H))}` +
-      `,"props":${JSON.stringify(propsObj)}` +
-      `,"propnames":${JSON.stringify(propnamesObj)}` +
+      `,"props":${propsJson}` +
+      `,"propnames":${propnamesJson}` +
       `,"glyphs":${JSON.stringify(glyphList)}` +
       '}'
     tables.set('BDFP', new TextEncoder().encode(json))
@@ -1462,16 +1471,17 @@ const present = (v: unknown): string | undefined => {
  */
 const MAX_GLYPH_PIXELS = 1 << 24
 
-const checkBox = (w: number, h: number): void => {
+const checkBox = (gid: number, w: number, h: number): void => {
   if (Math.max(w, 1) * Math.max(h, 1) > MAX_GLYPH_PIXELS) {
     throw new Error(
-      `TrueType glyph too large to rasterize (${w}×${h} pixels): corrupt font or wrong pixelsize`
+      `Malformed TrueType font: glyph ${gid} bounding box too large (${w}x${h} pixels)`
     )
   }
 }
 
 /** 17-slot meta with BBX and hexdata from the rasterized outline */
 const rasterMeta = (
+  gid: number,
   contours: Pt[][],
   ppu: number,
   box: [number, number, number, number] | null
@@ -1483,7 +1493,7 @@ const rasterMeta = (
     meta[3] = h
     meta[4] = xo
     meta[5] = yo
-    checkBox(w, h)
+    checkBox(gid, w, h)
     if (w > 0 && h > 0) {
       meta[16] = encodeBitmap(rasterize(contours, ppu, xo, yo, w, h), w)
     } else if (w > 0) {
@@ -1514,7 +1524,7 @@ const rasterMeta = (
   const y0 = Math.floor(ymin / ppu)
   const w = Math.ceil(xmax / ppu) - x0
   const h = Math.ceil(ymax / ppu) - y0
-  checkBox(w, h)
+  checkBox(gid, w, h)
   const bm = w > 0 && h > 0 ? rasterize(contours, ppu, x0, y0, w, h) : []
   const [tw, th, txo, tyo, hex] = trimToHex(bm, x0, y0)
   meta[2] = tw
@@ -1623,7 +1633,7 @@ export const readTtf = (
 
   const font = new Font()
   font.headers = {} as BdfHeaders
-  font.props = {}
+  font.props = newProps()
   font.glyphs = new Map()
   font.unencoded = []
   font._propnames = new Map()
@@ -1696,7 +1706,7 @@ export const readTtf = (
       : cp !== undefined
         ? defaultglyphname(cp)
         : `glyph${gid}`
-    const meta = rasterMeta(gr.contours(gid), ppu, null)
+    const meta = rasterMeta(gid, gr.contours(gid), ppu, null)
     const dwx = rnd(advances[gid] / ppu)
     meta[0] = name
     meta[1] = cp ?? -1
@@ -1748,6 +1758,58 @@ const updateBbox = (
   }
 }
 
+/**
+ * `JSON.parse` keeping the key order of objects (they become `Map`s; plain
+ * objects would enumerate integer-like keys first). The text must already be
+ * valid JSON.
+ */
+const parseJsonOrdered = (text: string): unknown => {
+  let i = 0
+  const lit = /true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y
+  const ws = (): void => {
+    while (i < text.length && ' \t\n\r'.includes(text[i])) i++
+  }
+  const str = (): string => {
+    const start = i++
+    while (text[i] !== '"') i += text[i] === '\\' ? 2 : 1
+    i++
+    return JSON.parse(text.slice(start, i)) as string
+  }
+  const val = (): unknown => {
+    ws()
+    const c = text[i]
+    if (c === '{' || c === '[') {
+      i++
+      const map = new Map<string, unknown>()
+      const arr: unknown[] = []
+      ws()
+      if (text[i] === (c === '{' ? '}' : ']')) {
+        i++
+        return c === '{' ? map : arr
+      }
+      for (;;) {
+        if (c === '{') {
+          ws()
+          const k = str()
+          ws()
+          i++ // ':'
+          map.set(k, val())
+        } else {
+          arr.push(val())
+        }
+        ws()
+        if (text[i++] !== ',') return c === '{' ? map : arr
+      }
+    }
+    if (c === '"') return str()
+    lit.lastIndex = i
+    const m = lit.exec(text) as RegExpExecArray
+    i += m[0].length
+    return JSON.parse(m[0])
+  }
+  return val()
+}
+
 const badBdfp = (msg: string): Error =>
   new Error(`Malformed BDFP table: ${msg}`)
 
@@ -1758,18 +1820,26 @@ const readWithBdfp = (
   advances: number[],
   numGlyphs: number
 ): void => {
-  let obj: Record<string, unknown>
+  let obj: unknown
   try {
-    obj = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw))
+    const text = new TextDecoder('utf-8', {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(raw)
+    JSON.parse(text) // validation
+    obj = parseJsonOrdered(text)
   } catch (e) {
     throw badBdfp(String(e))
   }
-  const isObj = (v: unknown): v is Record<string, unknown> =>
-    typeof v === 'object' && v !== null && !Array.isArray(v)
+  const isObj = (v: unknown): v is Map<string, unknown> => v instanceof Map
   if (!isObj(obj)) {
     throw badBdfp('bad structure')
   }
-  const { ppu, headers, props, propnames, glyphs: entries } = obj
+  const ppu = obj.get('ppu')
+  const headers = obj.get('headers')
+  const props = obj.get('props')
+  const propnames = obj.get('propnames')
+  const entries = obj.get('glyphs')
   if (
     ppu === undefined ||
     headers === undefined ||
@@ -1786,13 +1856,18 @@ const readWithBdfp = (
     throw badBdfp('bad structure')
   }
   const H = font.headers as unknown as Record<string, unknown>
-  for (const [k, v] of Object.entries(headers)) {
+  for (const [k, v] of headers) {
     H[k] = k === 'bdfversion' ? parseFloat(String(v)) : v
   }
-  for (const [k, v] of Object.entries(props)) {
+  const names = isObj(propnames) ? propnames : new Map<string, unknown>()
+  for (const [k, v] of props) {
     ;(font.props as Record<string, unknown>)[k] = v
+    // the property order is the order of `font._propnames` (see props.ts)
+    if (names.has(k)) {
+      font._propnames.set(k, String(names.get(k)))
+    }
   }
-  for (const [k, v] of Object.entries(isObj(propnames) ? propnames : {})) {
+  for (const [k, v] of names) {
     font._propnames.set(k, String(v))
   }
   for (const e of entries as unknown[]) {
@@ -1807,13 +1882,13 @@ const readWithBdfp = (
     let meta: GlyphMetaInFont
     let altcode: number | null = null
     if (e.length === 18) {
-      meta = rasterMeta(contours, ppu, [e[3], e[4], e[5], e[6]])
+      meta = rasterMeta(gid, contours, ppu, [e[3], e[4], e[5], e[6]])
       for (let k = 6; k < 16; k++) {
         meta[k] = e[k + 1] as number | null
       }
       altcode = e[17] as number | null
     } else {
-      meta = rasterMeta(contours, ppu, null)
+      meta = rasterMeta(gid, contours, ppu, null)
       const dwx = rnd(advances[gid] / ppu)
       meta[8] = dwx
       meta[9] = 0

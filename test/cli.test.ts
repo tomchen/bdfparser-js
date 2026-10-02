@@ -4,7 +4,13 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { gzipSync } from 'zlib'
 import { loadFontFile, main } from '../src/cli'
-import { Font, VERSION, readPcf, setWarningHandler } from '../src/index'
+import {
+  Font,
+  VERSION,
+  getCodec,
+  readPcf,
+  setWarningHandler,
+} from '../src/index'
 
 const SPEC = './test/fonts/spec_example_fixed.bdf'
 const UNIFONT = './test/fonts/unifont-13.0.04-for-test.bdf'
@@ -112,6 +118,8 @@ properties:
     const f = loadFontFile(out)
     expect(f.props.charset_registry).toBe('GB2312.1980')
     expect(f.glyph('的')?.cp()).toBe(0x3544)
+    // the CLI loads the exact multi-byte tables (bdfparser/cjk)
+    expect(getCodec('gb2312').exact).toBe(true)
   })
 
   test('warnings go to stderr unless --quiet', () => {

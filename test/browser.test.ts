@@ -9,12 +9,15 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import vm from 'vm'
 import { gzipSync } from 'zlib'
-import { build } from 'tsup'
+import { build, type Options } from 'tsup'
+import config from '../tsup.config'
 
 type Lib = typeof import('../src/index')
 
 let dir: string
 let lib: Lib
+let cjkCode: string
+let context: vm.Context
 let fetched: string[] = []
 const warnings: string[] = []
 
@@ -40,6 +43,20 @@ beforeAll(async () => {
     silent: true,
     config: false,
   })
+  const cjkOptions = (config as Options[]).find(
+    (c) =>
+      typeof c.entry === 'object' &&
+      !Array.isArray(c.entry) &&
+      'bdfparser-cjk.global' in c.entry
+  ) as Options
+  await build({
+    ...cjkOptions,
+    sourcemap: false,
+    outDir: dir,
+    silent: true,
+    config: false,
+  })
+  cjkCode = readFileSync(join(dir, 'bdfparser-cjk.global.js'), 'utf8')
   const code = readFileSync(join(dir, 'bdfparser.global.js'), 'utf8')
   const fetchMock = async (url: string | URL) => {
     fetched.push(String(url))
@@ -52,7 +69,7 @@ beforeAll(async () => {
     }
     return new Response(u.endsWith('spec.bdf') ? fontBytes : fontText)
   }
-  const context = vm.createContext({
+  context = vm.createContext({
     console: { ...console, warn: (m: string) => warnings.push(m) },
     TextDecoder,
     TextEncoder,
@@ -159,6 +176,21 @@ describe('IIFE bundle in a browser-like context', () => {
     const font = await lib.$Font(big5)
     expect(font.charset).toBe('big5')
     expect(font.lacksglyphs('A人光')).toBeNull()
+    expect(lib.getCodec('cp1251').exact).toBe(true) // single-byte: built in
+  })
+
+  test('bdfparser-cjk.global.js: needs bdfparser.global.js first, then registers the exact tables', () => {
+    expect(() =>
+      vm.runInContext(cjkCode, vm.createContext({}), {
+        filename: 'bdfparser-cjk.global.js',
+      })
+    ).toThrow('load bdfparser.global.js first')
+    expect(lib.getCodec('big5').exact).toBe(false)
+    vm.runInContext(cjkCode, context, { filename: 'bdfparser-cjk.global.js' })
+    expect(lib.getCodec('big5').exact).toBe(true)
+    expect(lib.cp2char(0xa741, 'big5')).toBe('你')
+    expect(lib.char2cp('😀', 'gb18030')).toBe(0x9439fc36)
+    expect(lib.cp2char(0x8740, 'cp932')).toBe('①')
   })
 
   test('warnings go through console.warn by default', () => {

@@ -1,3 +1,4 @@
+import { fmtnum, pyStrip } from './fmt'
 import { bitmapContours } from './outline'
 import { DirectionNumberType, TodataFuncRetType } from './types'
 import { warn } from './warn'
@@ -41,15 +42,7 @@ const FROMSTRING_MAP: Record<string, string> = {
   '2': '2',
 }
 
-/**
- * Format a number for text output (SPEC-v3): the integer string if `n` is
- * integral, otherwise the shortest round-trip representation.
- *
- * @param n - Number
- *
- * @returns Formatted number
- */
-export const fmtnum = (n: number): string => String(n)
+export { fmtnum }
 
 const ORed = (a: string, b: string | undefined): string =>
   b !== undefined && b !== '0' ? b : a
@@ -227,10 +220,10 @@ export class Bitmap {
    */
   static fromstring(text: string): Bitmap {
     const lines = text.replace(/\r/g, '').split('\n')
-    while (lines.length > 0 && lines[0].trim() === '') {
+    while (lines.length > 0 && pyStrip(lines[0]) === '') {
       lines.shift()
     }
-    while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+    while (lines.length > 0 && pyStrip(lines[lines.length - 1]) === '') {
       lines.pop()
     }
     const rows = lines.map((line, i) => {
@@ -349,9 +342,16 @@ export class Bitmap {
    *
    * @returns The `Bitmap` object itself, which now has only the specified area as its `.bindata`
    *
+   * @throws RangeError if `w` or `h` is negative
+   *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/bitmap#crop}
    */
   crop(w: number, h: number, xoff?: number | null, yoff?: number | null): this {
+    if (w < 0 || h < 0) {
+      throw new RangeError(
+        `Bitmap.crop: negative width or height (${String(w)}, ${String(h)})`
+      )
+    }
     const _xoff = xoff ?? 0
     const _yoff = yoff ?? 0
     this.bindata = cropBitmap(this.bindata, w, h, _xoff, _yoff)
@@ -470,15 +470,23 @@ export class Bitmap {
         }
       }
     } else {
-      maxsize = Math.max(...bitmaplist.map((val) => val.width()))
-      ret = []
-      offset = 0
-      const bl = bitmaplist.length
-      for (let bi = 0; bi < bl; bi++) {
-        const bitmap = bitmaplist[bi]
-        if (_offsetlist && bi !== 0) {
-          offset = _offsetlist[bi - 1]
+      // empty (0-height or 0-width) bitmaps are skipped, together with the
+      // offset before them (SPEC-v3 §11.4); the first kept bitmap gets no
+      // offset
+      const kept: [Bitmap, number][] = []
+      bitmaplist.forEach((bitmap, bi) => {
+        if (bitmap.height() > 0 && bitmap.width() > 0) {
+          const off = _offsetlist && bi !== 0 ? _offsetlist[bi - 1] : 0
+          kept.push([bitmap, kept.length > 0 ? off : 0])
         }
+      })
+      if (kept.length === 0) {
+        return new this([])
+      }
+      maxsize = Math.max(...kept.map(([val]) => val.width()))
+      ret = []
+      for (const [bitmap, off] of kept) {
+        offset = off
         bd = bitmap.bindata
         w = bitmap.width()
         if (w !== maxsize) {
@@ -674,6 +682,8 @@ export class Bitmap {
    *
    * @returns Bitmap data in the specified type (list or string) and format
    *
+   * @throws RangeError for `datatype` 5 if a row is wider than 53 pixels (not exactly representable as a `number`)
+   *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/bitmap#todata}
    */
   todata<T extends 0 | 1 | 2 | 3 | 4 | 5 | null>(
@@ -716,6 +726,13 @@ export class Bitmap {
         // if there are '2's, it will throw error
         ret = this.bindata.map((s) => {
           checkBinary(s)
+          if (s.length > 53) {
+            // permanent language difference (SPEC-v3 §11.2): Python returns
+            // big ints, JS numbers are exact up to 2**53 only
+            throw new RangeError(
+              `todata(5): rows wider than 53 pixels cannot be represented exactly as numbers (row width ${s.length})`
+            )
+          }
           return s === '' ? 0 : parseInt(s, 2)
         })
         break

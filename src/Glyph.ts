@@ -36,21 +36,41 @@ export type SetbitmapOptions = {
   trim?: boolean
 }
 
-const HEX2BIN: Record<string, string> = {}
+const HEX2BIN: Record<string, string> = Object.create(null) as Record<
+  string,
+  string
+>
 for (let i = 0; i < 16; i++) {
   const b = i.toString(2).padStart(4, '0')
   HEX2BIN[i.toString(16)] = b
   HEX2BIN[i.toString(16).toUpperCase()] = b
 }
 
-/** hex row → binary string (4 bits per digit; invalid digits give `0000`) */
-const hex2bin = (h: string): string => {
+/** hex row → binary string (4 bits per digit); `null` on a non-hex character */
+const hex2bin = (h: string): string | null => {
   let s = ''
   for (const c of h) {
-    s += HEX2BIN[c] ?? '0000'
+    const b = HEX2BIN[c]
+    if (b === undefined) {
+      return null
+    }
+    s += b
   }
   return s
 }
+
+/**
+ * @internal Error for a hex row with a non-hex character (SPEC-v3 §11.4)
+ */
+export const hexRowError = (
+  name: unknown,
+  cp: unknown,
+  row: number,
+  hex: string
+): Error =>
+  new Error(
+    `Glyph "${String(name)}" (codepoint ${String(cp)}): bitmap row ${row} ${JSON.stringify(hex)} contains a non-hex character`
+  )
 
 /** binary row → upper-case hex of `ndigits` digits (bits left-aligned) */
 const bin2hex = (row: string, ndigits: number): string => {
@@ -156,7 +176,6 @@ export class Glyph {
    */
   _detach(): void {
     this.__attached = false
-    this.__store = null
   }
 
   /**
@@ -164,6 +183,14 @@ export class Glyph {
    */
   get _store(): GlyphMetaInFont | null {
     return this.__attached ? this.__store : null
+  }
+
+  /**
+   * @internal The 17-slot list this glyph was last attached to, even if it
+   * has been detached since (`null` if it was never attached).
+   */
+  get _slot(): GlyphMetaInFont | null {
+    return this.__store
   }
 
   private __sync(): void {
@@ -272,7 +299,20 @@ export class Glyph {
   }
 
   private __draw_original(): Bitmap {
-    return new Bitmap((this.meta['hexdata'] ?? []).map(hex2bin))
+    return new Bitmap(
+      (this.meta['hexdata'] ?? []).map((h, i) => {
+        const b = hex2bin(h)
+        if (b === null) {
+          throw hexRowError(
+            this.meta['glyphname'],
+            this.meta['codepoint'],
+            i,
+            h
+          )
+        }
+        return b
+      })
+    )
   }
 
   private __draw_bb(): Bitmap {

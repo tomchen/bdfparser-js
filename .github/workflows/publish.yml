@@ -24,6 +24,14 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+      # fail early (before building / publishing) if the tag is not v{version}
+      - name: Check that the tag matches package.json version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version v${VERSION}"
+            exit 1
+          fi
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Lint, typecheck, test
@@ -33,9 +41,10 @@ jobs:
           bun run test
       - name: Build
         run: bun run build
-      - name: Check version
+      - name: Check the build
         run: |
-          test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
+          node tools/check-dts.mjs
+          node tools/check-runtime.mjs
       - name: Publish to npm (with provenance)
         run: npm publish --provenance --access public
         env:

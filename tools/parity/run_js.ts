@@ -21,6 +21,9 @@ import {
   writeSync,
   closeSync,
 } from 'node:fs'
+// exact multi-byte charset tables (SPEC-v3 §11.1): parity with Python's
+// codecs is only expected with the sub-module loaded
+import '../../src/cjk'
 import {
   Bitmap,
   Font,
@@ -35,6 +38,7 @@ import {
   sanitizeCharset,
   setWarningHandler,
 } from '../../src/index'
+import { propEntries } from '../../src/props'
 
 setWarningHandler(null)
 
@@ -127,7 +131,11 @@ const meta17 = (l: unknown[]): unknown[] =>
 
 const model = (font: Font): Json => ({
   headers: Object.entries(font.headers).map(([k, v]) => [k, v]),
-  props: Object.entries(font.props).map(([k, v]) => [k, v]),
+  // property order = the library's output order (SPEC-v3 §11.3: an ordered
+  // key list, not Object.keys); the comment list separately (its position
+  // among the keys has no meaning)
+  props: propEntries(font.props, font._propnames).map(([k, v]) => [k, v]),
+  comment: font.props.comment ?? null,
   propnames: [...font._propnames.entries()],
   glyphs: [...font.glyphs.entries()].map(([cp, m]) => [cp, meta17(m)]),
   unencoded: font.unencoded.map((e) => [e.altcode, meta17(e.meta)]),

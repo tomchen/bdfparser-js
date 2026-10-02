@@ -1,14 +1,14 @@
-import { Bitmap, fmtnum } from './Bitmap'
+import { Bitmap } from './Bitmap'
 import {
   DIRE_MAP,
   DIRE_SHORTCUT_MAP,
   EMPTY_GLYPH,
   META_TITLES,
-  PATTERN_VVECTOR_DELIMITER,
 } from './constants'
 import {
   CharsetCodec,
   IconvLike,
+  _isOneChar,
   canonicalCharset,
   charsetProps,
   detectGL,
@@ -24,7 +24,9 @@ import {
   metaToList,
   slotEquals,
 } from './Glyph'
+import { fmtnum, pyLeadingInt } from './fmt'
 import { readPcf, writePcf } from './pcf'
+import { copyProps, newProps, propKeys } from './props'
 import { readTtf, writeTtf } from './ttf'
 import {
   BdfHeaders,
@@ -71,6 +73,18 @@ export type FontCreateOptions = {
   /** y resolution, default 75 */
   yres?: number
 }
+
+/**
+ * A `URL` object, or anything with a string `href` (structural type, so the
+ * type declarations need neither the DOM nor the Node.js types)
+ */
+export type URLLike = { readonly href: string }
+
+/**
+ * `fetch` options (`RequestInit`), passed through unchanged (structural type,
+ * see {@link URLLike})
+ */
+export type FetchInit = { [key: string]: unknown }
 
 /** Options of {@link Font.load_bytes} / {@link Font.load_url} */
 export type LoadOptions = {
@@ -119,7 +133,18 @@ type DrawOptions = {
   missing?: Glyph | GlyphMeta | null
 }
 
-const RE_INT = /^[+-]?\d+$/
+const RE_INT = /^[+-]?[0-9]+$/
+const RE_VERSION = /^[0-9]+(?:\.[0-9]+)?$/
+const INT32_MIN = -0x80000000
+const INT32_MAX = 0x7fffffff
+const UINT32_MAX = 0xffffffff
+
+/** BDF whitespace (SPEC-v3 §11.4): ASCII space, \t, \n, \v, \f, \r only */
+const RE_WS = /[ \t\n\v\f\r]/
+const RE_WS_RUN = /[ \t\n\v\f\r]+/
+const RE_TRIM = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g
+const RE_VVECTOR_DELIMITER = /[ \t\n\v\f\r,]+/
+const wsTrim = (s: string): string => s.replace(RE_TRIM, '')
 
 const REQUIRED_HEADERS = [
   'pointsize',
@@ -294,9 +319,9 @@ class BdfParser {
     value: string,
     n: number,
     key: string,
-    sep: RegExp = /\s+/
+    sep: RegExp = RE_WS_RUN
   ): number[] {
-    const v = value.trim()
+    const v = wsTrim(value)
     const parts = v === '' ? [] : v.split(sep)
     if (parts.length < n) {
       throw new BDFParseError(
@@ -304,15 +329,25 @@ class BdfParser {
         this.lineno
       )
     }
-    return parts.slice(0, n).map((t) => {
-      if (!RE_INT.test(t)) {
-        throw new BDFParseError(
-          `malformed number in ${key} ${JSON.stringify(value)}`,
-          this.lineno
-        )
-      }
-      return parseInt(t, 10)
-    })
+    return parts.slice(0, n).map((t) => this.int32(t, key, value))
+  }
+
+  /** one integer token of a required numeric field (signed 32-bit) */
+  private int32(t: string, key: string, value: string): number {
+    if (!RE_INT.test(t)) {
+      throw new BDFParseError(
+        `malformed number in ${key} ${JSON.stringify(value)}`,
+        this.lineno
+      )
+    }
+    const n = parseInt(t, 10)
+    if (n < INT32_MIN || n > INT32_MAX) {
+      throw new BDFParseError(
+        `number ${t} in ${key} is out of the 32-bit range`,
+        this.lineno
+      )
+    }
+    return n
   }
 
   private endHeaders(): void {
@@ -376,13 +411,16 @@ class BdfParser {
     if (this.state === 6) {
       return
     }
-    const line = raw.trim()
+    if (this.lineno === 1 && raw.charCodeAt(0) === 0xfeff) {
+      raw = raw.slice(1) // byte order mark at the start of the file
+    }
+    const line = wsTrim(raw)
     if (line === '') {
       return
     }
-    const sp = line.search(/\s/)
+    const sp = line.search(RE_WS)
     const key = sp === -1 ? line : line.slice(0, sp)
-    const value = sp === -1 ? '' : line.slice(sp).trim()
+    const value = sp === -1 ? '' : wsTrim(line.slice(sp))
     const meta = this.meta
     const font = this.font
     const headers = this.headers
@@ -401,7 +439,7 @@ class BdfParser {
           this.missingEndchar()
           this.finishGlyph()
           this.state = 6
-        } else {
+        } else if (key !== 'COMMENT') {
           ;(meta[16] as string[]).push(line)
         }
         return
@@ -409,19 +447,11 @@ class BdfParser {
       case 4: // inside a glyph, before BITMAP
         if (key === 'ENCODING') {
           if (!this.used.has(key)) {
-            const parts = value === '' ? [] : value.split(/\s+/)
+            const parts = value === '' ? [] : value.split(RE_WS_RUN)
             if (parts.length === 0) {
               throw new BDFParseError('ENCODING needs a number', this.lineno)
             }
-            const nums = parts.slice(0, 2).map((t) => {
-              if (!RE_INT.test(t)) {
-                throw new BDFParseError(
-                  `malformed number in ENCODING ${JSON.stringify(value)}`,
-                  this.lineno
-                )
-              }
-              return parseInt(t, 10)
-            })
+            const nums = parts.slice(0, 2).map((t) => this.int32(t, key, value))
             meta[1] = nums[0]
             if (nums[0] < 0 && nums.length > 1) {
               this.altcode = nums[1]
@@ -430,7 +460,14 @@ class BdfParser {
           }
         } else if (key === 'BBX') {
           if (!this.used.has(key)) {
-            meta.splice(2, 4, ...this.ints(value, 4, key))
+            const bbx = this.ints(value, 4, key)
+            if (bbx[0] < 0 || bbx[1] < 0) {
+              throw new BDFParseError(
+                `glyph '${String(meta[0])}' has a negative BBX size ${bbx[0]} ${bbx[1]}`,
+                this.lineno
+              )
+            }
+            meta.splice(2, 4, ...bbx)
             this.used.add(key)
           }
         } else if (key in GLYPH_METRICS) {
@@ -443,7 +480,7 @@ class BdfParser {
                 value,
                 2,
                 key,
-                key === 'VVECTOR' ? PATTERN_VVECTOR_DELIMITER : undefined
+                key === 'VVECTOR' ? RE_VVECTOR_DELIMITER : undefined
               )
             )
             this.used.add(key)
@@ -489,7 +526,14 @@ class BdfParser {
             )
           }
           this.state = 2
-        } else if (key === 'COMMENT') {
+        } else if (key === 'COMMENT' || /^comment$/i.test(key)) {
+          if (key !== 'COMMENT') {
+            // `comment`, `Comment` ... would collide with the comment list
+            // `props.comment` (SPEC-v3 §11.3)
+            warn(
+              `line ${this.lineno}: property '${key}' treated as a COMMENT line`
+            )
+          }
           if (!Array.isArray(font.props.comment)) {
             font.props.comment = []
           }
@@ -538,14 +582,13 @@ class BdfParser {
 
     // state 0: header
     if (key === 'STARTFONT') {
-      const v = Number(value)
-      if (value === '' || Number.isNaN(v)) {
+      if (!RE_VERSION.test(value)) {
         throw new BDFParseError(
           `malformed version number in STARTFONT ${JSON.stringify(value)}`,
           this.lineno
         )
       }
-      headers.bdfversion = v
+      headers.bdfversion = Number(value)
     } else if (key === 'FONT') {
       headers.fontname = value
     } else if (key === 'SIZE') {
@@ -555,8 +598,14 @@ class BdfParser {
         key
       )
     } else if (key === 'FONTBOUNDINGBOX') {
-      ;[headers.fbbx, headers.fbby, headers.fbbxoff, headers.fbbyoff] =
-        this.ints(value, 4, key)
+      const fbb = this.ints(value, 4, key)
+      if (fbb[0] < 0 || fbb[1] < 0) {
+        throw new BDFParseError(
+          `negative FONTBOUNDINGBOX size ${fbb[0]} ${fbb[1]}`,
+          this.lineno
+        )
+      }
+      ;[headers.fbbx, headers.fbby, headers.fbbxoff, headers.fbbyoff] = fbb
     } else if (key === 'COMMENT') {
       if (!Array.isArray(headers.comment)) {
         headers.comment = []
@@ -570,11 +619,11 @@ class BdfParser {
         value,
         2,
         key,
-        key === 'VVECTOR' ? PATTERN_VVECTOR_DELIMITER : undefined
+        key === 'VVECTOR' ? RE_VVECTOR_DELIMITER : undefined
       )
     } else if (key === 'STARTPROPERTIES') {
       this.endHeaders()
-      const first = value.split(/\s+/)[0]
+      const first = value.split(RE_WS_RUN)[0]
       if (value === '') {
         this.propcount = null
       } else if (RE_INT.test(first)) {
@@ -628,7 +677,11 @@ class BdfParser {
       return out
     }
     if (RE_INT.test(value)) {
-      return parseInt(value, 10)
+      // integers only in the 32-bit range (signed or unsigned), else raw text
+      const n = parseInt(value, 10)
+      if (n >= INT32_MIN && n <= UINT32_MAX) {
+        return n
+      }
     }
     return value
   }
@@ -670,7 +723,7 @@ export class Font {
   /** Global headers (`bdfversion`, `fontname`, `pointsize`, ...), `{}` before loading */
   public headers: BdfHeaders = {} as BdfHeaders
   /** Properties, keys in lower case; values `number`, `string` or `null`; `comment` → `string[]` */
-  public props: Props = {}
+  public props: Props = newProps()
   /** codepoint → 17-slot glyph list, file order */
   public glyphs: Map<number, GlyphMetaInFont> = new Map()
   /** Glyphs with `ENCODING -1`, file order */
@@ -689,7 +742,7 @@ export class Font {
 
   private __reset(): void {
     this.headers = {} as BdfHeaders
-    this.props = {}
+    this.props = newProps()
     this.glyphs = new Map()
     this.unencoded = []
     this._propnames = new Map()
@@ -768,7 +821,9 @@ export class Font {
     if (magic === 'OTTO') {
       throw new Error('CFF-based OpenType is not supported')
     }
-    return this.load_string(new TextDecoder('utf-8').decode(b))
+    return this.load_string(
+      new TextDecoder('utf-8', { ignoreBOM: true }).decode(b)
+    )
   }
 
   /**
@@ -782,14 +837,15 @@ export class Font {
    * @returns Promise of the current `Font` object
    */
   async load_url(
-    url: string | URL,
-    init?: RequestInit,
+    url: string | URLLike,
+    init?: FetchInit,
     options: LoadOptions = {}
   ): Promise<this> {
-    const res = await fetch(url, init)
+    const href = typeof url === 'string' ? url : url.href
+    const res = await fetch(href, init as RequestInit | undefined)
     if (!res.ok) {
       throw new Error(
-        `Failed to fetch ${String(url)}: ${res.status} ${res.statusText}`
+        `Failed to fetch ${href}: ${res.status} ${res.statusText}`
       )
     }
     return this.load_bytes_async(
@@ -987,7 +1043,10 @@ export class Font {
    * @returns Value, or `null` if missing
    */
   getprop(key: string): PropValue | string[] {
-    const v = this.props[key.toLowerCase()]
+    const k = key.toLowerCase()
+    const v = Object.prototype.hasOwnProperty.call(this.props, k)
+      ? this.props[k]
+      : undefined
     return v === undefined ? null : v
   }
 
@@ -1509,7 +1568,10 @@ export class Font {
     if (typeof cpOrGlyph === 'number') {
       this.glyphs.delete(cpOrGlyph)
     } else {
-      const store = cpOrGlyph._store
+      // a glyph that was attached removes exactly its own slot: no-op if it
+      // was already removed or replaced (never the glyph that now has its
+      // codepoint)
+      const store = cpOrGlyph._slot
       if (store !== null && cpOrGlyph.font === this) {
         if (store[1] < 0) {
           const i = this.unencoded.findIndex((e) => e.meta === store)
@@ -1628,11 +1690,7 @@ export class Font {
       headers.comment = [...headers.comment]
     }
     font.headers = headers
-    const props: Props = { ...this.props }
-    if (Array.isArray(props.comment)) {
-      props.comment = [...props.comment]
-    }
-    font.props = props
+    font.props = copyProps(this.props)
     font._propnames = new Map(this._propnames)
     font.__iconv = this.__iconv
     font.__charset = this.__charset
@@ -1759,7 +1817,7 @@ export class Font {
     let dropped = 0
     for (const [cp, list] of this.glyphs) {
       const ch = this.cp2char(cp)
-      const ncp = ch === null ? null : codec.char2cp(ch)
+      const ncp = _isOneChar(ch) ? codec.char2cp(ch) : null
       if (ncp === null) {
         dropped++
         continue
@@ -1832,14 +1890,16 @@ export class Font {
     both('SWIDTH1', h.swx1, h.swy1)
     both('DWIDTH1', h.dwx1, h.dwy1)
     both('VVECTOR', h.vvectorx, h.vvectory)
-    for (const c of h.comment ?? []) {
+    for (const c of h.comment || []) {
       lines.push(`COMMENT "${c}"`)
     }
 
-    const propkeys = Object.keys(this.props).filter((k) => k !== 'comment')
-    const propcomments = Array.isArray(this.props.comment)
-      ? this.props.comment
-      : []
+    const propkeys = propKeys(this.props, this._propnames)
+    // `props.comment` is the list of COMMENT lines; like the Python library,
+    // any other falsy value is no comment and a string is iterated (a value
+    // that is not iterable throws)
+    const pc = this.props.comment as unknown
+    const propcomments: string[] = pc ? [...(pc as Iterable<string>)] : []
     if (propkeys.length > 0 || propcomments.length > 0) {
       lines.push(`STARTPROPERTIES ${propkeys.length}`)
       for (const c of propcomments) {
@@ -1931,12 +1991,29 @@ export class Font {
       '"': '&quot;',
       "'": '&apos;',
     }
-    const toXmlValue = (value: string | number): string =>
-      String(value).replace(/[<>&"']/g, (char) => XML_ESC[char])
-    const intprop = (v: unknown): number => {
-      const n = parseInt(String(v ?? '0'), 10)
-      return Number.isNaN(n) ? 0 : n
+    const toXmlValue = (value: string | number | bigint): string =>
+      (typeof value === 'string' ? value : fmtnum(value)).replace(
+        /[<>&"']/g,
+        (char) => XML_ESC[char]
+      )
+    // `parseInt(String(v), 10) || 0` with exact integers (like Python's int())
+    const intprop = (v: unknown): number | bigint => {
+      if (v === null || v === undefined) {
+        return 0
+      }
+      if (typeof v === 'number' && Number.isInteger(v)) {
+        return v
+      }
+      const m = pyLeadingInt(String(v))
+      if (m === null) {
+        return 0
+      }
+      const n = BigInt(m)
+      return n >= Number.MIN_SAFE_INTEGER && n <= Number.MAX_SAFE_INTEGER
+        ? Number(n)
+        : n
     }
+    const half = (v: number | bigint): number => Number(v) * 0.5
     const props = this.props
     const headers = this.headers
 
@@ -1972,10 +2049,35 @@ export class Font {
         '\n</metadata>\n'
     }
 
+    // Unicode value of a glyph (SPEC-v3 §11.5): `cp2char`, one code point,
+    // not a surrogate; `null` if the glyph has no Unicode mapping
+    const unicodeOf = (cp: number): number | null => {
+      const ch = this.cp2char(cp)
+      if (typeof ch !== 'string') {
+        return null
+      }
+      const u = ch.codePointAt(0)
+      if (
+        u === undefined ||
+        ch.length !== (u > 0xffff ? 2 : 1) ||
+        (u >= 0xd800 && u <= 0xdfff)
+      ) {
+        return null
+      }
+      return u
+    }
+
     // unicode range from all glyphs
     const hex4 = (n: number): string =>
       n.toString(16).toUpperCase().padStart(4, '0')
-    const cps = [...this.glyphs.keys()].sort((a, b) => a - b)
+    const unis = new Set<number>()
+    for (const cp of this.glyphs.keys()) {
+      const u = unicodeOf(cp)
+      if (u !== null) {
+        unis.add(u)
+      }
+    }
+    const cps = [...unis].sort((a, b) => a - b)
     const ranges: string[] = []
     if (cps.length > 0) {
       let rangeStart = cps[0]
@@ -2000,7 +2102,7 @@ export class Font {
     (headers.fontname || '').replace(/^-/, '').toLowerCase()
   )}" horiz-adv-x="${defaultAdv}">`
 
-    const fontFaceAttributes: Record<string, string | number> = {
+    const fontFaceAttributes: Record<string, string | number | bigint> = {
       'font-family': String(
         props.family_name || props.family || headers.fontname || ''
       ),
@@ -2008,7 +2110,7 @@ export class Font {
       'font-style': String(props.slant || 'normal'),
       'units-per-em': unitsPerEm,
       'cap-height': intprop(props.cap_height) || fontAscent,
-      'x-height': intprop(props.x_height) || fontAscent * 0.5,
+      'x-height': intprop(props.x_height) || half(fontAscent),
       ascent: fontAscent,
       descent: fontDescent,
       bbox: `${headers.fbbxoff || 0} ${headers.fbbyoff || 0} ${
@@ -2038,17 +2140,17 @@ export class Font {
       if (!glyphPath) {
         continue
       }
-      const cp = glyph.meta.codepoint
+      const u = unicodeOf(glyph.meta.codepoint)
       const glyphAttributes: Record<string, string | number> = {
         'glyph-name': glyph.meta.glyphname,
       }
-      if (unicodeAttrControlCharNoSkip || cp >= 32) {
+      if (u !== null && (unicodeAttrControlCharNoSkip || u >= 32)) {
         glyphAttributes.unicode =
           unicodeAttrFormat === 'decncr'
-            ? `&#${cp};`
+            ? `&#${u};`
             : unicodeAttrFormat === 'char'
-              ? toXmlValue(String.fromCodePoint(cp))
-              : `&#x${cp.toString(16)};`
+              ? toXmlValue(String.fromCodePoint(u))
+              : `&#x${u.toString(16)};`
       }
       glyphAttributes['horiz-adv-x'] = glyph.meta.dwx0 || defaultAdv
       glyphAttributes.d = glyphPath

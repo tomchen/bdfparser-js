@@ -5,10 +5,10 @@ and browsers. Read BDF ([Glyph Bitmap Distribution Format](https://en.wikipedia.
 
 [![npm package](https://img.shields.io/badge/npm%20i-bdfparser-brightgreen)](https://www.npmjs.com/package/bdfparser) [![version number](https://img.shields.io/npm/v/bdfparser?color=green&label=version)](https://github.com/tomchen/bdfparser-js/releases) [![Actions Status](https://github.com/tomchen/bdfparser-js/workflows/Test/badge.svg)](https://github.com/tomchen/bdfparser-js/actions) [![Node.js](https://img.shields.io/badge/node-%3E=20-brightgreen.svg?logo=node.js)](https://nodejs.org/) [![License](https://img.shields.io/github/license/tomchen/bdfparser-js)](https://github.com/tomchen/bdfparser-js/blob/master/LICENSE)
 
-- **Zero runtime dependencies**, no Node.js APIs in the library (`TextDecoder`, `DataView`, `fetch` and `DecompressionStream` only), so the same code runs everywhere.
+- **Zero runtime dependencies**, no Node.js APIs in the library (`TextDecoder`, `DataView`, `fetch` and `DecompressionStream` only), so the same code runs everywhere; the type declarations need neither the DOM nor the Node.js types.
 - Same API as the **Python library** ([bdfparser on PyPI](https://pypi.org/project/bdfparser/), [GitHub](https://github.com/tomchen/bdfparser)); both produce byte-identical BDF / PCF / TTF / SVG output (cross-language golden tests).
 - Robust parser: LF / CRLF / CR, blank lines, unencoded glyphs (`ENCODING -1`), typed properties (integers, quoted strings with `""` escapes, raw non-Adobe values), original property-name case, `BDFParseError` with line numbers. `tobdf()` reproduces FontForge-written files byte for byte.
-- Non-Unicode fonts (GB2312, Big5, Shift-JIS, EUC-KR, JIS X 0208, KS C 5601, ISO 8859-x, KOI8, CP125x, …) work out of the box, including X11 GL-form fonts (`GB2312.1980-0`).
+- Non-Unicode fonts work, with conversion tables generated from Python's codecs, so both libraries map every code identically: single-byte charsets (ISO 8859-x, KOI8, CP125x, CP437/850/852/866/874, TIS-620, Mac Roman, …) are built in; the multi-byte ones (GB2312, GBK, GB18030, Big5, Big5-HKSCS, Shift-JIS, CP932, EUC-JP / JIS X 0208, EUC-KR / KS C 5601, CP949, Johab, …) are in the optional sub-module [`bdfparser/cjk`](#encodings). X11 GL-form fonts (`GB2312.1980-0`) are detected.
 - `bdfparser` command line tool: `convert`, `info`, `preview`.
 
 Documentation: <https://font.tomchen.org/bdfparser_js/> · Examples: [`examples/`](examples/)
@@ -155,15 +155,54 @@ font.charsetconvert('iso8859-2') // re-encode the codepoints
 
 `font.charset` is the canonical charset from `CHARSET_REGISTRY` /
 `CHARSET_ENCODING` (e.g. `'iso10646'`, `'gb2312'`, `'iso88592'`, `'cp1252'`);
-`font.glyph(char)`, `font.draw(text)`, `font.lacksglyphs(text)` and
-`glyph.chr()` convert through it with the standard `TextDecoder`, so legacy
-fonts need no extra package:
+`font.glyph(char)`, `font.draw(text)`, `font.lacksglyphs(text)`,
+`glyph.chr()`, `font.tosvgfont()` and the TrueType `cmap` convert through it.
+The charset table and the conversion tables are generated from the Python
+library (Python's codecs are the reference), so both libraries give the same
+results in every runtime; unknown charsets map as Unicode (with a warning).
 
 ```js
 font.encoding({ charset: 'big5' }) // force a charset ('' clears it)
 font.encoding({ char2cp: (c) => …, cp2char: (cp) => … }) // custom mapping
-font.encoding({ iconv }) // optional iconv-lite, e.g. for GB18030 4-byte codes
 ```
+
+### Multi-byte (CJK) charsets: `bdfparser/cjk`
+
+Single-byte charsets are built in. The exact tables of the multi-byte
+charsets — `gb2312` (also `euccn`, `iso2022cn`), `gbk`, `cp936`, `gb18030`
+(including the 4-byte codes), `big5`, `big5hkscs`, `cp950`, `shiftjis`,
+`cp932`, `eucjp` / `jisx0208`, `euckr` / `ksc5601`, `cp949`, `johab` — are in
+an optional sub-module (about 115 kB minified, 67 kB gzipped), loaded once
+for the whole application:
+
+```js
+// Node.js, Deno, Bun, bundlers
+import { Font } from 'bdfparser'
+import 'bdfparser/cjk' // CommonJS: require('bdfparser/cjk')
+```
+
+```html
+<!-- browser, classic scripts: after bdfparser.global.js -->
+<script src="https://cdn.jsdelivr.net/npm/bdfparser@3/dist/bdfparser.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bdfparser@3/dist/bdfparser-cjk.global.js"></script>
+```
+
+Without it, multi-byte charsets fall back to the runtime's `TextDecoder`
+restricted to the charset's byte ranges, with one warning per charset: the
+results may then differ from the Python library and between runtimes (e.g.
+Node.js's ICU decoders), and GB18030 4-byte characters cannot be converted to
+codes. An `iconv-lite`-compatible object (`font.encoding({ iconv })`) can be
+used instead of `TextDecoder` in that case. The `bdfparser` command line tool
+always loads the tables. `getCodec(name).exact` tells whether the exact
+tables are used; `registerCharsetTables(tables)` registers tables explicitly
+(the sub-module exports its `cjkTables`).
+
+Conversions are strict: `cp2char(code)` returns exactly one character (a code
+whose bytes decode to two characters, such as Big5-HKSCS 0x8862, is
+unmapped), and `char2cp(char)` returns a code only if it converts back to the
+same character and has an allowed length (1 byte for single-byte charsets,
+1–2 bytes for double-byte charsets, 1, 2 or 4 bytes for GB18030), e.g.
+`char2cp('¥', 'shiftjis')` is `null` (Shift_JIS 0x5C is `\`).
 
 ## Warnings and errors
 
@@ -197,7 +236,7 @@ Inputs: `.bdf`, `.pcf`, `.pcf.gz`, `.ttf`; outputs: `.bdf`, `.pcf`, `.ttf`,
 - Properties are typed: unquoted integers are `number`, quoted strings are unescaped (`""` → `"`), non-Adobe unquoted values are kept as strings; original property names are kept when writing.
 - `COMMENT` values only lose one pair of surrounding `"` (v2 stripped every quote character).
 - `font.headers` is `{}` (not `undefined`) before loading; `font.charset` is a canonical key (`'iso10646'` by default).
-- `char2cp` / `cp2char` / `glyph.chr()` return `null` when not representable (no exceptions); no `iconv` needed for legacy charsets.
+- `char2cp` / `cp2char` / `glyph.chr()` return `null` when not representable (no exceptions); no `iconv` needed for legacy charsets (multi-byte charsets: `import 'bdfparser/cjk'`).
 - Glyphs from `glyphbycp` / `glyph` / `iterglyphs` are attached: editing methods write back to the font.
 - `Bitmap.tosvg()` path output is now one merged outline (`M…H…V…Z`); `draw2canvas` takes an options object (old signature still accepted).
 - Warnings go through `setWarningHandler` instead of `console.warn` directly.

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { runInNewContext } from 'vm'
 import opentype from 'opentype.js'
+import '../src/cjk' // exact charset tables: the golden files were made with Python's codecs
 import { Font } from '../src/Font'
 import { bitmapContours } from '../src/outline'
 import { readTtf, writeTtf, WriteTtfOptions } from '../src/ttf'
@@ -1052,7 +1053,9 @@ describe('readTtf: errors', () => {
       t,
       t === 'BDFP' ? new TextEncoder().encode(JSON.stringify(json)) : d,
     ])
-    expect(() => readTtf(assemble(tables))).toThrow(/too large/)
+    expect(() => readTtf(assemble(tables))).toThrow(
+      `Malformed TrueType font: glyph ${json.glyphs[0][0]} bounding box too large (100000x100000 pixels)`
+    )
     json.glyphs[0][3] = 0
     json.glyphs[0][4] = 1e9
     const tables2 = splitTables(good).map(([t, d]): [string, Uint8Array] => [

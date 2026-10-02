@@ -964,8 +964,18 @@ describe('writePcf options', () => {
 describe('writePcf edge cases', () => {
   const base = async (): Promise<Font> => loadText(TERMINAL_BDF)
 
-  test('font not loaded', () => {
-    expect(() => writePcf(new Font())).toThrow(/not loaded/)
+  test('font without headers (not loaded): defaults, like Python', () => {
+    const r = readPcf(writePcf(new Font()))
+    expect(r.glyphs.size).toBe(0)
+    expect(r.props.resolution_x).toBe(75)
+    expect(r.props.font).toBe('')
+    // a FONTBOUNDINGBOX line that is not recognised (U+001F is not
+    // whitespace, SPEC-v3 §11.4)
+    const f = new Font().load_string(
+      'STARTFONT 2.1\nFONT F\nSIZE 8 75 75\n\x1fFONTBOUNDINGBOX 2 10 -2 0\nCHARS 0\nENDFONT\n'
+    )
+    expect(f.headers.fbbx).toBeUndefined()
+    expect(readPcf(writePcf(f)).headers.fontname).toBe('F')
   })
 
   test('fallbacks for missing FONT_ASCENT/FONT_DESCENT, DWIDTH, SWIDTH', async () => {
@@ -997,7 +1007,7 @@ describe('writePcf edge cases', () => {
     font.setprop('NOTHING', null)
     font.setprop('COMMENT_LIKE', 'dropped by bdftopcf')
     font.setprop('Fraction', 1.5)
-    font.setprop('Big', 2 ** 32 + 5)
+    font.setprop('Big', 2 ** 32 - 1) // 32-bit word, read back as INT32
     font.setprop('Utf8', 'Grüße 漢字')
     font.setprop('DEFAULT_CHAR', '65')
     font.setprop('X_HEIGHT', '-1')
@@ -1008,7 +1018,7 @@ describe('writePcf edge cases', () => {
     expect('comment_like' in r.props).toBe(false)
     expect('comment' in r.props).toBe(false)
     expect(r.props.fraction).toBe('1.5')
-    expect(r.props.big).toBe(5)
+    expect(r.props.big).toBe(-1)
     expect(r.props.utf8).toBe('Grüße 漢字')
     expect(r._propnames.get('fraction')).toBe('Fraction')
     expect(r.props.default_char).toBeUndefined() // string DEFAULT_CHAR is ignored
@@ -1019,6 +1029,13 @@ describe('writePcf edge cases', () => {
     const r2 = readPcf(writePcf(font))
     expect(r2.props.font).toBe('from-prop')
     expect(r2.headers.fontname).toBe('from-prop')
+    // SPEC-v3 §11.2: values that do not fit a 32-bit word are rejected
+    font.setprop('Big', 2 ** 32 + 5)
+    expect(() => writePcf(font)).toThrow(
+      new RangeError(
+        'PCF: property Big value 4294967301 does not fit in 32 bits'
+      )
+    )
   })
 
   test('glyph names: first token, max 99 bytes', async () => {

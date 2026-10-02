@@ -142,7 +142,10 @@ def meta17(lst):
 def model(font: Font):
     return {
         'headers': [[k, v] for k, v in font.headers.items()],
-        'props': [[k, v] for k, v in font.props.items()],
+        # property order = output order; the comment list separately (its
+        # position among the keys has no meaning; see run_js.ts)
+        'props': [[k, v] for k, v in font.props.items() if k != 'comment'],
+        'comment': font.props.get('comment'),
         'propnames': [[k, v] for k, v in font._propnames.items()],
         'glyphs': [[cp, meta17(m)] for cp, m in font.glyphs.items()],
         'unencoded': [[e['altcode'], meta17(e['meta'])] for e in font.unencoded],

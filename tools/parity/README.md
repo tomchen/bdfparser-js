@@ -22,12 +22,7 @@ python3 tools/parity/run_all.py --n 20000 --n-all 5000 --seed 7 --jobs 16
 python3 tools/parity/run_all.py --skip-corpus    # random cases only
 ```
 
-To get a `bun run parity` command, add this script to `package.json` (not
-added by the harness):
-
-```json
-"parity": "python3 tools/parity/run_all.py"
-```
+`bun run parity` runs the first command (script in `package.json`).
 
 Requirements: Python ≥ 3.10 (stdlib only; the Python library is pure Python),
 Bun (runs `run_js.ts` directly; with `--js node` Bun only bundles it and Node
@@ -39,10 +34,10 @@ Exit status is 1 if any phase finds a NEW (not yet analysed) divergence.
 
 | phase | what |
 |---|---|
-| `tables` | full charset tables on both sides: `cp2char` over 0x00–0xFF, every GL pair 0x2121–0x7E7E, every lead 0x81–0xFE × trail 0x40–0xFE (plus 4-byte GB18030 samples), `char2cp` over the whole BMP (+ astral samples), for every charset of SPEC §4 (GL and non-GL variants) and the extra names in `gen_cases.EXTRA_TABLE_NAMES`. Writes `tables_report.txt` and `agreed.json` (codes both sides map identically). |
-| `random` | `--n` (default 2000) seeded random cases that avoid every known divergence trigger (`--avoid known`). This is the phase that finds new bugs. |
+| `tables` | full charset tables on both sides: `cp2char` over 0x00–0xFF, every GL pair 0x2121–0x7E7E, every lead 0x81–0xFE × trail 0x30–0xFE (plus 4-byte GB18030 samples), `char2cp` over the whole BMP (+ astral samples), for every charset of SPEC §4 / §11.1 (GL and non-GL variants) and the extra names in `gen_cases.EXTRA_TABLE_NAMES`. Writes `tables_report.txt` and `agreed.json` (codes both sides map identically). Since SPEC-v3 §11.1 the tables must be identical: every differing table counts as NEW. The JS runner imports `bdfparser/cjk` (`src/cjk.ts`). |
+| `random` | `--n` (default 2000) seeded random cases that avoid the triggers of the open findings (`--avoid known`: only `ragged`, K12). This is the phase that finds new bugs. |
 | `random_all` | `--n-all` (default 1000) seeded random cases with every feature enabled. All divergences must match a known issue; the report shows how often each occurs. |
-| `probes` | one minimal reproducer per finding below, plus regression probes for bugs found by this harness and fixed upstream. Prints whether each finding still reproduces. `--heavy` adds K15 (allocates gigabytes). |
+| `probes` | one minimal reproducer per finding below (the fixed ones are now regression probes expected to agree), plus regression probes for the SPEC-v3 §11 decisions (`S01`–`S12`). Prints whether each still reproduces; a regression probe that diverges again counts as NEW. |
 | `corpus` | every distinct `.bdf`, `.pcf`, `.pcf.gz` and `.ttf` file in `../bdfparser/tests/fonts`, `test/fonts` and `test/fixtures` (251 files) with a fixed script: load, model, `tobdf`, `topcf` (3 option sets), PCF read-back, `tottf` (3 option sets), TTF read-back (both shapes), `tosvgfont` (2 option sets), `drawall` / `draw` in several directions, `char2cp` / `cp2char` probes, `charsetconvert`, `transform`, `updatebbox`. Fonts over 1.5 MB (uncompressed) get a reduced script. |
 
 ### Random cases
@@ -148,7 +143,44 @@ the full Python and JavaScript results.
 
 ## Findings
 
-Status as of bdfparser `844c1c7` / bdfparser-js `efda8f7` (2026-10-02). Both
+**Status after SPEC-v3 §11** (bdfparser `0a8149e`, bdfparser-js working tree
+of 2026-10-02): every finding below except K11 and K12 is fixed in both
+libraries (§11 decided each one; the "Status" column says how) and has a
+regression probe. K11 (`todata(5)` of rows wider than 53 pixels) and K12
+(ragged bitmaps, invalid input) are the permanent language differences listed
+in §11; `known_issues.py` only matches those two, so any recurrence of the
+others is reported as NEW.
+
+| id | status |
+|---|---|
+| K02 | fixed (§11.2): zero-width rows give `''` / `0` on both sides |
+| K03 | fixed (§11.4): negative `BBX` / `FONTBOUNDINGBOX` sizes are `BDFParseError`, `Bitmap.crop` with a negative size raises (`ValueError` / `RangeError`), `Font.transform` order defined |
+| K04 | fixed (§11.4): `overlay` keeps the size of `self`, the other bitmap is aligned top-left and clipped (Python changed) |
+| K05 | fixed (§11.2): integer fields are signed 32-bit, unquoted property integers −2³¹ … 2³²−1, larger values are kept as strings |
+| K06a–d | fixed (§11.3): JS keeps an ordered key list and null-prototype `props`; a `comment` property line in any case is a comment (with a warning) |
+| K07 | fixed (§11.4): whitespace is ASCII space / `\t` / `\n` / `\v` / `\f` / `\r` only (both sides) |
+| K08 | fixed (§11.2): strict ASCII integer syntax; `STARTFONT` `digits[.digits]` |
+| K09 | fixed (§11.4): JS `removeglyph` of a detached Glyph is a no-op |
+| K10 | fixed (§11.1): GB18030 4-byte codes via the range table in `bdfparser/cjk` |
+| K11 | **permanent** (§11.2): JS `todata(5)` throws `RangeError` for rows wider than 53 pixels; `known_issues.K11-todata-wide-rows` |
+| K12 | **permanent** (invalid input); `known_issues.K12-ragged-bitmap` |
+| K13 | fixed (§11.1): JS tables generated from Python's codecs (`tools/gen_charsets.py`); `char2cp` round-trips with an allowed byte length (Python changed); `cp437`, `cp850`, `cp852`, `cp866`, `cp874`, `cp932`, `cp936`, `cp949`, `cp950`, `johab` in both tables, `hz` in neither |
+| K14 | fixed (§11.1): one canonicalisation (`ISO8859-01` → `iso88591`, `KOI8-RU` → unknown `koi8ru`) |
+| K15 | fixed (§11.2): PCF writer range checks before allocating (both raise) |
+| K16 | fixed (§11.4): vertical `concatall` skips empty bitmaps with the offset before them (both) |
+| K17 | fixed (§11.1): JS no longer depends on the runtime's `TextDecoder` when `bdfparser/cjk` is loaded; the `--js node` run is identical to the Bun run |
+
+Found while implementing §11 with this harness (fixed in JS, regression tests
+in `test/hardening.test.ts` and probes `S11`, `S12`): `tosvgfont` integer
+properties beyond 2⁵³ (exact in Python), `fmtnum` of large or tiny floats
+(Python `repr` style), a `comment` property that is a string (Python iterates
+it), the PCF writer's hex-row stripping (Python `str.strip()` whitespace),
+`writePcf` of a font without `FONTBOUNDINGBOX` (Python writes defaults), and
+`TextDecoder` dropping a U+FEFF at the start of PCF strings and of
+`load_bytes` input (Python keeps it).
+
+The original analysis follows (status as of bdfparser `844c1c7` /
+bdfparser-js `efda8f7`, before §11). Both
 repositories were being changed while the harness was built; two divergences
 it found early were fixed upstream during that time and are kept as
 regression probes: **R01** `drawall`/`draw` with nothing to draw (Python
@@ -179,7 +211,7 @@ the spec does not decide; then a spec decision is needed).
 | K16 | Python | §1.3 (equal-length rows) | `Bitmap.concatall([[], [], ['0110','0010']], direction=-1, align=0, offsetlist=[-2, 3])` → Python `['0110','0010','0000','0000','0000','','']` (zero-width rows: `__listofstr_offset_concat` takes the width from an empty list, `zip()` truncates), JS pads to width 4. |
 | K17 | JS (runtime) | §4 ("WHATWG TextDecoder") | The JS results for legacy charsets depend on the JS runtime: Node's ICU-backed `TextDecoder` differs from Bun's (and from the WHATWG tables) for big5 / big5hkscs (6253 codes), euc-kr / ks c 5601 (9042: Node decodes plain EUC-KR, not UHC), euc-jp / jisx0208 (33), shift_jis (1). Node also returns PUA characters for big5 0xFF / 0x8140 in `fatal` mode instead of throwing. Compare `tables_js.json` of a `--js node` and a default run. |
 
-### K13: codec table differences (Python codecs vs WHATWG decoders)
+### K13 (historical): codec table differences (Python codecs vs WHATWG decoders)
 
 The spec accepts GB2312 table variants (e.g. 0xA1A4). The table phase
 measures all differences (`out/tables_report.txt`; 35 of 59 tables differ,
@@ -221,13 +253,16 @@ JIS X 0201, Mac Roman, the Unicode keys, unknown charsets) is identical.
 
 ## Results of the reference run
 
-At the commits above (Bun 1.4.2, Node 24.21, Python 3.12, 20-core machine):
+After SPEC-v3 §11 (bdfparser `0a8149e`, bdfparser-js working tree of
+2026-10-02; Bun 1.4.2, Node 24.21, Python 3.12, 20-core machine):
 
-| run | cases | operations | NEW | wall time |
-|---|---|---|---|---|
-| `run_all.py` (defaults, 8 jobs): tables / random / random_all / probes / corpus | 59 tables, 2000 + 1000 + 29 + 251 | 49179 + 24099 + 64 + 5221 | 0 | 66 s (tables 9 s, random 11 s, random_all 8 s, corpus 36 s) |
-| `--n 20000 --n-all 5000 --seed 101 --jobs 12 --skip-corpus --skip-probes` | 25000 | 613240 | 0 | 151 s |
-| `--js node --seed 202` (all phases) | 3280 + 59 tables | 78539 | 0 | 142 s |
+| run | cases | operations | NEW | known | wall time |
+|---|---|---|---|---|---|
+| `run_all.py` (defaults, 8 jobs): tables / random / random_all / probes / corpus | 67 tables, 2000 + 1000 + 41 + 251 | 35941 + 17588 + 89 + 5221 | 0 (0 tables differ) | random_all: K11 ×1, K12 ×1; probes: K11, K12 | 65 s |
+| `--n 20000 --n-all 5000 --seed 101 --jobs 12 --skip-corpus --skip-probes` | 25000 | 437383 | 0 | K11 ×8, K12 ×4 | 114 s |
+| `--js node --seed 202` (all phases) | 3292 + 67 tables | 57997 | 0 (0 tables differ) | probes: K11, K12 | 63 s |
 
-In `random_all` every divergence is one of K02–K14; under Node the corpus
-shows 26 instead of 19 K13 divergences (K17).
+Before §11 (bdfparser `844c1c7` / bdfparser-js `efda8f7`) the same default run
+had every divergence labelled K02–K14 in `random_all` (59 tables, 35 of them
+differing), and under Node the corpus showed 26 instead of 19 K13
+divergences (K17).

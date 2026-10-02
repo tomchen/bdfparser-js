@@ -1,77 +1,93 @@
 {
   "name": "bdfparser",
+  "version": "3.0.0",
+  "description": "BDF / PCF bitmap font parser, editor and converter (BDF, PCF, pixel TTF with square or round dots) in TypeScript / JavaScript, for Node.js, Deno, Bun and browsers",
+  "type": "module",
   "packageManager": "bun@1.4.2",
-  "version": "3.0.0-rc.1",
-  "description": "BDF (Glyph Bitmap Distribution Format) Bitmap Font File Parser Library in JavaScript (TypeScript)",
-  "main": "dist/cjs/index.js",
-  "module": "dist/esm/index.js",
-  "browsers": "dist/umd/index.js",
-  "umd:main": "dist/umd/index.js",
-  "types": "dist/types/index.d.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "unpkg": "./dist/bdfparser.global.js",
+  "jsdelivr": "./dist/bdfparser.global.js",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "bdfparser": "./dist/cli.js"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "postinstall": "husky install",
-    "prepublishOnly": "pinst --disable",
-    "postpublish": "pinst --enable",
-    "build": "bun run build:cjs && bun run build:esm && bun run build:umd && bun run build:types",
-    "build:cjs": "node tools/cleanup cjs && tsc -p config/tsconfig.cjs.json",
-    "build:esm": "node tools/cleanup esm && tsc -p config/tsconfig.esm.json",
-    "build:umd": "node tools/cleanup umd && webpack --config config/webpack.config.js",
-    "build:types": "node tools/cleanup types && tsc -p config/tsconfig.types.json",
-    "clean": "node tools/cleanup",
+    "prepare": "husky",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write . && eslint --fix .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage",
     "package": "bun run build && npm pack",
-    "test": "jest --no-cache --runInBand",
-    "test:deno": "cd deno && bun run test",
-    "test:deno:cov": "cd deno && bun run test:cov",
-    "test:cov": "jest --no-cache --coverage --runInBand",
-    "addscope": "node tools/packagejson name @tomchen/bdfparser"
+    "addscope": "node tools/packagejson.cjs name @tomchen/bdfparser"
   },
   "publishConfig": {
     "access": "public"
   },
-  "files": [
-    "dist"
-  ],
   "keywords": [
     "bdf",
+    "pcf",
+    "ttf",
     "bitmap",
     "font",
+    "pixel",
     "parser",
+    "editor",
+    "converter",
     "node",
     "deno",
+    "bun",
     "browser"
   ],
   "author": "Tom Chen <tomchen.org@gmail.com>",
   "license": "MIT",
-  "homepage": "https://github.com/tomchen/bdfparser-js",
+  "homepage": "https://font.tomchen.org/bdfparser_js/",
   "repository": {
     "type": "git",
-    "url": "git@github.com:tomchen/bdfparser-js.git"
+    "url": "git+https://github.com/tomchen/bdfparser-js.git"
   },
   "bugs": {
     "url": "https://github.com/tomchen/bdfparser-js/issues"
   },
-  "dependencies": {},
-  "devDependencies": {
-    "@types/jest": "^27.0.1",
-    "@typescript-eslint/eslint-plugin": "^4.31.1",
-    "@typescript-eslint/parser": "^4.31.1",
-    "eslint": "^7.32.0",
-    "eslint-config-prettier": "^8.3.0",
-    "eslint-plugin-prettier": "^4.0.0",
-    "husky": "^7.0.2",
-    "iconv-lite": "^0.6.3",
-    "jest": "^27.2.0",
-    "pinst": "^2.1.6",
-    "prettier": "^2.4.0",
-    "readlineiter": "^1.0.1",
-    "ts-jest": "^27.0.5",
-    "ts-loader": "^9.2.5",
-    "ts-node": "^10.2.1",
-    "typescript": "^4.4.3",
-    "webpack": "^5.97.1",
-    "webpack-cli": "^4.8.0"
-  },
   "engines": {
-    "node": ">= 12.0"
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@eslint/js": "10",
+    "@types/node": "^26.6.4",
+    "@vitest/coverage-v8": "5.0.3",
+    "eslint": "10",
+    "eslint-config-prettier": "10",
+    "fetchline": "1",
+    "globals": "^17.13.0",
+    "husky": "9",
+    "iconv-lite": "0.7",
+    "opentype.js": "2",
+    "prettier": "3",
+    "readlineiter": "1",
+    "tsup": "8.5.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8",
+    "vitest": "5.0.3"
   }
 }

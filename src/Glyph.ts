@@ -3,6 +3,20 @@ import { Font } from './Font'
 import { GlyphDrawModeType, GlyphMeta } from './types'
 
 /**
+ * Default glyph name for a codepoint: `uniXXXX` / `uXXXXX` (Unicode) or `char{cp}`.
+ */
+export const defaultglyphname = (
+  cp: number,
+  charsetIsUnicode = true
+): string => {
+  if (!charsetIsUnicode) {
+    return `char${cp}`
+  }
+  const hex = cp.toString(16).toUpperCase()
+  return cp <= 0xffff ? `uni${hex.padStart(4, '0')}` : `u${hex.padStart(5, '0')}`
+}
+
+/**
  * `Glyph` object
  *
  * @see online docs: {@link https://font.tomchen.org/bdfparser_js/glyph}

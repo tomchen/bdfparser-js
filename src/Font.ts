@@ -36,6 +36,9 @@ export class Font {
   private __headers: BdfHeadersTemp = {}
   public props: Props = {}
   public glyphs: Map<number, GlyphMetaInFont> = new Map()
+  public unencoded: { altcode: number | null; meta: GlyphMetaInFont }[] = []
+  /** @internal lower-case property name -> original spelling */
+  public _propnames: Map<string, string> = new Map()
   private __glyph_count_to_check: number | null = null
   private __curline_startchar: string | null = null
   private __curline_chars: string | null = null
@@ -444,6 +447,32 @@ export class Font {
       // check charset_encoding is non-0 pure number
       this.charset = 'iso8859' + this.props.charset_encoding
     }
+  }
+
+  /**
+   * Set a property (case-insensitive key). Remembers the given spelling of a new key.
+   *
+   * @returns The current `Font` object
+   */
+  setprop(key: string, value: string | number | null): this {
+    const k = key.toLowerCase()
+    if (!this._propnames.has(k) && k !== 'comment') {
+      this._propnames.set(k, key)
+    }
+    this.props[k] = value
+    return this
+  }
+
+  /**
+   * Compute SWIDTH (scalable width, 1/1000 em) from DWIDTH (pixels).
+   */
+  swidth(dwx: number): number {
+    const pointsize = this.headers?.pointsize
+    const xres = this.headers?.xres
+    if (pointsize && xres) {
+      return Math.floor((dwx * 72000) / (pointsize * xres) + 0.5)
+    }
+    return Math.floor((dwx * 1000) / Math.max(this.headers?.fbbx || 1, 1) + 0.5)
   }
 
   /**

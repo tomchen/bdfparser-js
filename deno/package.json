@@ -1,6 +1,0 @@
-{
-  "scripts": {
-    "test": "deno test --unstable --allow-read --allow-write --allow-net test/",
-    "test:cov": "deno test --unstable --allow-read --allow-write --allow-net --coverage test/"
-  }
-}

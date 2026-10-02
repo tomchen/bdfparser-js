@@ -1,0 +1,8 @@
+dist
+coverage
+temp
+node_modules
+bun.lock
+test/fonts
+test/fixtures
+*.md

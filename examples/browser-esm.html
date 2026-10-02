@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bdfparser — ES module</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 2rem auto;
+        max-width: 48rem;
+        padding: 0 1rem;
+        color: #222;
+      }
+      canvas {
+        border: 1px solid #ccc;
+        image-rendering: pixelated;
+        max-width: 100%;
+      }
+      img {
+        border: 1px solid #ccc;
+      }
+      button {
+        margin-right: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>bdfparser — <code>&lt;script type="module"&gt;</code></h1>
+    <p>
+      Loads a BDF font, edits glyphs (bold, italic, a new glyph), renders text
+      to a canvas and to SVG, and lets you download the font as BDF, PCF or a
+      pixel TrueType font.
+    </p>
+    <canvas id="canvas" width="720" height="160"></canvas>
+    <p id="svg"></p>
+    <p>
+      <button id="bdf">Download .bdf</button>
+      <button id="pcf">Download .pcf</button>
+      <button id="ttf">Download .ttf (round dots)</button>
+    </p>
+
+    <script type="module">
+      // From jsDelivr (ESM build of the npm package):
+      import {
+        $Font,
+        Bitmap,
+      } from 'https://cdn.jsdelivr.net/npm/bdfparser@3/+esm'
+      // Or the local build (run `bun run build` first):
+      // import { $Font, Bitmap } from '../dist/index.js'
+
+      const font = await $Font(
+        new URL('fonts/unifont-subset.bdf', location.href)
+      )
+
+      // --- editing ---------------------------------------------------------
+      // a new glyph (U+2665 ♥ replaced by a hand-drawn heart)
+      font
+        .newglyph(
+          0x2665,
+          Bitmap.fromstring(
+            `
+          .##...##.
+          ####.####
+          #########
+          .#######.
+          ..#####..
+          ...###...
+          ....#....
+        `.replace(/ /g, '')
+          ),
+          { mode: 1, dwidth: 10 }
+        )
+        .shift(0, 3)
+      // a bold and an italic copy
+      const bold = font.clone().transform((b) => b.bold())
+      const italic = font.clone().transform((b) => b.italic(3), [0x20, 0x7e])
+
+      // --- rendering -------------------------------------------------------
+      const ctx = document.getElementById('canvas').getContext('2d')
+      const line = (f, text, y, color) =>
+        f.draw(text).draw2canvas(ctx, {
+          x: 10,
+          y,
+          pixelsize: 3,
+          pixelcolors: { 0: null, 1: color, 2: null },
+        })
+      line(font, 'Regular ♥ 你好', 4, '#222')
+      line(bold, 'Bold ♥ 你好', 56, '#b00')
+      line(italic, 'Italic text', 108, '#06c')
+
+      const svg = font.draw('SVG ♥').tosvg(4, 'path', false, {}, 'circle')
+      document.getElementById('svg').innerHTML = svg
+
+      // --- conversions -----------------------------------------------------
+      const download = (data, name, type) => {
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(new Blob([data], { type }))
+        a.download = name
+        a.click()
+        URL.revokeObjectURL(a.href)
+      }
+      document.getElementById('bdf').onclick = () =>
+        download(font.tobdf(), 'unifont-edited.bdf', 'text/plain')
+      document.getElementById('pcf').onclick = () =>
+        download(font.topcf(), 'unifont-edited.pcf', 'application/octet-stream')
+      document.getElementById('ttf').onclick = () =>
+        download(
+          font.tottf({ shape: 'circle', dotsize: 0.9 }),
+          'unifont-dots.ttf',
+          'font/ttf'
+        )
+    </script>
+  </body>
+</html>

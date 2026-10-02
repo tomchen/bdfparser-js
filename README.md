@@ -1,69 +1,211 @@
-# BDF Parser TypeScript (JavaScript) library
+# bdfparser (TypeScript / JavaScript)
 
-BDF (Glyph Bitmap Distribution; [Wikipedia](https://en.wikipedia.org/wiki/Glyph_Bitmap_Distribution_Format); [Spec](https://font.tomchen.org/bdf_spec/)) format bitmap font file parser library in TypeScript (JavaScript).
+BDF / PCF bitmap font **parser, editor and converter** for Node.js, Deno, Bun
+and browsers. Read BDF ([Glyph Bitmap Distribution Format](https://en.wikipedia.org/wiki/Glyph_Bitmap_Distribution_Format), [spec](https://font.tomchen.org/bdf_spec/)), PCF (also `.pcf.gz`) and TrueType fonts; render pixel text in any writing direction; edit glyphs and bitmaps; write BDF, PCF (byte-identical to `bdftopcf`), pixel TrueType fonts with **square or round dots**, SVG and SVG fonts.
 
-It supports parsing, manipulation, and export of BDF files, pixelated text bitmap rendering in any writing direction, bitmap image modification, conversion to SVG, various encodings, and more. The library features the [`Font`](https://font.tomchen.org/bdfparser_js/font), [`Glyph`](https://font.tomchen.org/bdfparser_js/glyph) and [`Bitmap`](https://font.tomchen.org/bdfparser_js/bitmap) classes, which provide over 40 chainable API methods.
+[![npm package](https://img.shields.io/badge/npm%20i-bdfparser-brightgreen)](https://www.npmjs.com/package/bdfparser) [![version number](https://img.shields.io/npm/v/bdfparser?color=green&label=version)](https://github.com/tomchen/bdfparser-js/releases) [![Actions Status](https://github.com/tomchen/bdfparser-js/workflows/Test/badge.svg)](https://github.com/tomchen/bdfparser-js/actions) [![Node.js](https://img.shields.io/badge/node-%3E=20-brightgreen.svg?logo=node.js)](https://nodejs.org/) [![License](https://img.shields.io/github/license/tomchen/bdfparser-js)](https://github.com/tomchen/bdfparser-js/blob/master/LICENSE)
 
-With zero dependencies and tested in Node.js <img src="https://raw.githubusercontent.com/tomchen/fetchline/main/images/node.svg" title="Node.js" alt="Node.js" width="26px" height="26px">, browsers <img src="https://raw.githubusercontent.com/tomchen/fetchline/main/images/chrome.svg" title="Google Chrome" alt="Google Chrome" width="21px" height="21px"><img src="https://raw.githubusercontent.com/tomchen/fetchline/main/images/firefox.svg" title="Firefox" alt="Firefox" width="21px" height="21px"><img src="https://raw.githubusercontent.com/tomchen/fetchline/main/images/safari.svg" title="Safari" alt="Safari" width="21px" height="21px"><img src="https://raw.githubusercontent.com/tomchen/fetchline/main/images/edge.svg" title="Microsoft Edge" alt="Microsoft Edge" width="21px" height="21px"><img src="https://raw.githubusercontent.com/tomchen/fetchline/main/images/opera.svg" title="Opera" alt="Opera" width="21px" height="21px"><img src="https://raw.githubusercontent.com/tomchen/fetchline/main/images/samsung_internet.svg" title="Samsung Internet" alt="Samsung Internet" width="21px" height="21px"> (so you can use HTML Canvas and SVG) and Deno <img src="https://raw.githubusercontent.com/tomchen/fetchline/main/images/deno.svg" title="Deno" alt="Deno" width="26px" height="26px">, it includes detailed documentation, tutorials, and an API reference.
+- **Zero runtime dependencies**, no Node.js APIs in the library (`TextDecoder`, `DataView`, `fetch` and `DecompressionStream` only), so the same code runs everywhere.
+- Same API as the **Python library** ([bdfparser on PyPI](https://pypi.org/project/bdfparser/), [GitHub](https://github.com/tomchen/bdfparser)); both produce byte-identical BDF / PCF / TTF / SVG output (cross-language golden tests).
+- Robust parser: LF / CRLF / CR, blank lines, unencoded glyphs (`ENCODING -1`), typed properties (integers, quoted strings with `""` escapes, raw non-Adobe values), original property-name case, `BDFParseError` with line numbers. `tobdf()` reproduces FontForge-written files byte for byte.
+- Non-Unicode fonts (GB2312, Big5, Shift-JIS, EUC-KR, JIS X 0208, KS C 5601, ISO 8859-x, KOI8, CP125x, …) work out of the box, including X11 GL-form fonts (`GB2312.1980-0`).
+- `bdfparser` command line tool: `convert`, `info`, `preview`.
 
-[![npm package](https://img.shields.io/badge/npm%20i-bdfparser-brightgreen)](https://www.npmjs.com/package/bdfparser) [![version number](https://img.shields.io/npm/v/bdfparser?color=green&label=version)](https://github.com/tomchen/bdfparser/releases) [![Actions Status](https://github.com/tomchen/bdfparser/workflows/Test/badge.svg)](https://github.com/tomchen/bdfparser/actions) [![Node.js](https://img.shields.io/badge/node-%3E=12.0-brightgreen.svg?logo=node.js)](https://nodejs.org/) [![Deno](https://img.shields.io/badge/deno-%3E=1.13.0-white.svg?logo=deno)](https://deno.land/x/bdfparser) [![License](https://img.shields.io/github/license/tomchen/bdfparser)](https://github.com/tomchen/bdfparser/blob/main/LICENSE)
+Documentation: <https://font.tomchen.org/bdfparser_js/> · Examples: [`examples/`](examples/)
 
-**BDF Parser TypeScript (JavaScript) library** ([documentation](https://font.tomchen.org/bdfparser_js/); [GitHub page](https://github.com/tomchen/bdfparser-js); [npm page](https://www.npmjs.com/package/bdfparser); `npm i bdfparser`) is a port of **BDF Parser Python library** ([documentation](https://font.tomchen.org/bdfparser_py/); [GitHub page](https://github.com/tomchen/bdfparser); [PyPI page](https://pypi.org/project/bdfparser/); `pip install bdfparser`). Both are written by [Tom Chen](https://github.com/tomchen/) and under the MIT License.
-
-You can even try the [**Live Demo & Code Editor**](https://font.tomchen.org/bdfparser_js/editor)!
-
-<a href="https://font.tomchen.org/bdfparser_js/editor" title="BDF Parser Live Demo & Code Editor"><img src="https://font.tomchen.org/img/bdfparser_js/bdfparser_live_editor_demo.gif" width="700" alt="BDF Parser Live Demo & Code Editor"></a>
-
-Below I'll show you some quick examples, but it is still strongly recommended you go to [**BDF Parser TypeScript (JavaScript) library's official website to read the detailed documentation / tutorials / API reference**](https://font.tomchen.org/bdfparser_js/).
-
-Install bdfparser TypeScript (JavaScript) library with npm (or `yarn add ...`):
+## Install
 
 ```bash
-npm install bdfparser readlineiter
+npm install bdfparser     # or: bun add bdfparser / pnpm add bdfparser / yarn add bdfparser
 ```
 
-`readlineiter` is used for Node.js to read local file. You can instead use `fetchline` for browsers/Deno to fetch remote file. See my [Fetch Line JavaScript packages](https://github.com/tomchen/fetchline).
+## Quick start
 
-Non type checked CommonJS example (read [doc](https://font.tomchen.org/bdfparser_js/) for its strict TypeScript ES module code):
+### Node.js
 
 ```js
-const { $Font } = require('bdfparser')
-const getline = require('readlineiter') // or `require('fetchline')` for browsers
-;(async () => {
+import { readFileSync, writeFileSync } from 'node:fs'
+import { Font } from 'bdfparser' // CommonJS: const { Font } = require('bdfparser')
 
-const font = await $Font(getline('./test/fonts/unifont-13.0.04.bdf'))
-console.log(`This font's global size is \
-${font.headers.fbbx} x ${font.headers.fbby} (pixel), \
-it contains ${font.length} glyphs.`)
+// BDF, PCF or TTF bytes; the format is auto-detected
+const font = new Font().load_bytes(readFileSync('unifont.bdf'))
 
-// =================================
+console.log(font.headers.fontname, font.length, 'glyphs')
+console.log(font.draw('Hello!').toString()) // # and . art
 
-const a = font.glyph('a')
-const c = font.glyph('c')
-const ac = a
-  .draw()
-  .crop(6, 8, 1, 2)
-  .concat(c.draw().crop(6, 8, 1, 2))
-  .shadow()
-const ac_8x8 = ac.enlarge(8, 8)
-ac_8x8.draw2canvas(document.getElementById('mycanvas').getContext('2d'))
-
-// =================================
-
-const hello = font.draw('Hello!', {direction: 'rl'}).glow()
-hello.draw2canvas(document.getElementById('mycanvas2').getContext('2d'))
-
-// =================================
-
-const font_preview = font.drawall()
-font_preview.draw2canvas(document.getElementById('mycanvas3').getContext('2d'))
-
-})()
+writeFileSync('unifont.pcf', font.topcf())
+writeFileSync('unifont-dots.ttf', font.tottf({ shape: 'circle' }))
 ```
 
-If you are using **Deno** instead of Node.js, you don't need to install the package with npm/yarn, and you should replace `const { $Font } = require('bdfparser'); const getline = require('readlineiter')` by:
+`new Font().load_string(text)` parses BDF text, and
+`await new Font().load_filelines(lines)` accepts any (async) iterable of lines,
+e.g. [`readlineiter`](https://github.com/tomchen/fetchline) as in v2.
+Gzip-compressed files (`.pcf.gz`) can be loaded with
+`await new Font().load_bytes_async(bytes)`.
+
+### Browser — classic `<script>` (global `bdfparser`)
+
+```html
+<canvas id="canvas" width="400" height="80"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/bdfparser@3/dist/bdfparser.global.js"></script>
+<!-- or https://unpkg.com/bdfparser@3/dist/bdfparser.global.js -->
+<script>
+  bdfparser.$Font(new URL('fonts/unifont.bdf', location.href)).then((font) => {
+    const ctx = document.getElementById('canvas').getContext('2d')
+    // top-left corner at (10, 20), each font pixel drawn as a 3×3 square
+    font.draw('Hello!').draw2canvas(ctx, { x: 10, y: 20, pixelsize: 3 })
+  })
+</script>
+```
+
+### Browser — ES module
+
+```html
+<script type="module">
+  import { $Font } from 'https://cdn.jsdelivr.net/npm/bdfparser@3/+esm'
+
+  const font = await $Font(new URL('fonts/unifont.bdf', location.href))
+  document.body.innerHTML = font.draw('Hi').tosvg(8)
+</script>
+```
+
+`$Font(source)` accepts a URL (fetched, `.gz` decompressed), BDF text, bytes
+(`Uint8Array` / `ArrayBuffer`) or an (async) iterable of lines.
+
+### Deno
 
 ```ts
-import { $Font } from "https://raw.githubusercontent.com/tomchen/bdfparser-js/main/deno/mod.ts"
-import readlineiter from 'https://raw.githubusercontent.com/tomchen/fetchline/main/packages/readlineiter-deno/mod.ts'
+import { Font } from 'npm:bdfparser@3'
+
+const font = new Font().load_bytes(await Deno.readFile('unifont.bdf'))
+console.log(font.draw('Deno').toString())
 ```
+
+### Bun
+
+```ts
+import { Font } from 'bdfparser'
+
+const font = new Font().load_bytes(await Bun.file('unifont.bdf').bytes())
+await Bun.write('unifont.ttf', font.tottf())
+```
+
+## Drawing to a canvas
+
+```js
+bitmap.draw2canvas(ctx, {
+  x: 0, // canvas position of the bitmap's top-left corner
+  y: 0,
+  pixelsize: 1, // canvas units per font pixel
+  pixelcolors: { 0: null, 1: 'black', 2: 'red' }, // null = transparent
+})
+```
+
+The v2 call `draw2canvas(ctx, pixelcolors, xoff, yoff)` still works.
+[`examples/led-matrix.html`](examples/led-matrix.html) renders text on an
+LED dot-matrix (round LEDs, scrolling marquee, frame → bytes for real LED
+drivers).
+
+## Editing
+
+```js
+import { Bitmap, Font } from 'bdfparser'
+
+const font = Font.create({ pixelsize: 8, familyname: 'Tiny' })
+
+// a new glyph from a text drawing ('#' = ink, '.' = blank);
+// mode 1: the bitmap's bottom-left corner is the glyph's (bbxoff, bbyoff) = (0, 0)
+font.newglyph(0x41, Bitmap.fromstring(`
+.##.
+#..#
+####
+#..#
+#..#`), { mode: 1, dwidth: 5 })
+
+const a = font.glyph('A') // attached: edits are written back to the font
+a.setmeta({ glyphname: 'A' }).shift(0, 1)
+a.transform((b) => b.bold()) // draw → transform → setbitmap
+
+font.transform((b) => b.italic()) // every glyph
+font.setprop('WEIGHT_NAME', 'Bold').updatebbox()
+
+const ascii = bigfont.subset([0x20, 0x7e]) // new font with a codepoint range
+ascii.merge(otherfont) // copy missing glyphs from another font
+font.charsetconvert('iso8859-2') // re-encode the codepoints
+```
+
+`Bitmap` methods: `crop`, `overlay`, `concat`, `enlarge`, `replace`, `shadow`,
+`glow`, `bytepad`, `fliph`, `flipv`, `rotate`, `invert`, `shift`, `bbox`,
+`trim`, `bold`, `italic`, `paste`, `getpixel`, `setpixel`, `equals`,
+`Bitmap.fromstring`, `Bitmap.blank`, `Bitmap.concatall`, `todata`, `tosvg`,
+`draw2canvas`.
+
+## Conversions
+
+| method                        | output                                                                                                                                 |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `font.tobdf()`                | BDF text                                                                                                                               |
+| `font.topcf(options?)`        | PCF bytes, identical to `bdftopcf`; options `byteorder`, `bitorder`, `glyphpad`, `scanunit`                                            |
+| `font.tottf(options?)`        | TrueType bytes; `shape: 'square' \| 'circle'`, `dotsize` (0–1.5], `ppu`, `metadata`, `timestamp`. Reading it back is lossless           |
+| `font.tosvgfont(options?)`    | SVG font                                                                                                                               |
+| `bitmap.tosvg(ps, format, …)` | SVG (`'path'`: all pixels merged into one outline, `'pathOnly'`, `'rect'`; `shape: 'circle'` for round dots)                           |
+| `readPcf`, `readTtf`, …       | module functions (`writePcf`, `writeTtf`, `bitmapContours`, `rasterize`)                                                               |
+
+## Encodings
+
+`font.charset` is the canonical charset from `CHARSET_REGISTRY` /
+`CHARSET_ENCODING` (e.g. `'iso10646'`, `'gb2312'`, `'iso88592'`, `'cp1252'`);
+`font.glyph(char)`, `font.draw(text)`, `font.lacksglyphs(text)` and
+`glyph.chr()` convert through it with the standard `TextDecoder`, so legacy
+fonts need no extra package:
+
+```js
+font.encoding({ charset: 'big5' }) // force a charset ('' clears it)
+font.encoding({ char2cp: (c) => …, cp2char: (cp) => … }) // custom mapping
+font.encoding({ iconv }) // optional iconv-lite, e.g. for GB18030 4-byte codes
+```
+
+## Warnings and errors
+
+Recoverable problems are reported through a replaceable handler (default:
+`console.warn('[bdfparser] …')`). Fatal parse errors throw `BDFParseError`
+(with `lineno`).
+
+```js
+import { setWarningHandler, BDFParseError } from 'bdfparser'
+
+setWarningHandler((message) => myLog.push(message)) // null = silent
+```
+
+## Command line
+
+```bash
+npx bdfparser convert font.bdf font.pcf
+npx bdfparser convert font.pcf.gz font.ttf --shape circle --dotsize 0.9 --ppu 64
+npx bdfparser convert font.bdf font-gb.bdf --charset gb2312
+npx bdfparser convert font.ttf font.bdf --pixelsize 16   # TTFs not written by bdfparser
+npx bdfparser info font.bdf
+npx bdfparser preview font.bdf "Hello"
+```
+
+Inputs: `.bdf`, `.pcf`, `.pcf.gz`, `.ttf`; outputs: `.bdf`, `.pcf`, `.ttf`,
+`.svg`. `-q` hides warnings.
+
+## Migrating from v2
+
+- Node ≥ 20; ESM + CommonJS + IIFE builds; the Deno-specific `deno/` folder is gone — use `npm:bdfparser`.
+- Properties are typed: unquoted integers are `number`, quoted strings are unescaped (`""` → `"`), non-Adobe unquoted values are kept as strings; original property names are kept when writing.
+- `COMMENT` values only lose one pair of surrounding `"` (v2 stripped every quote character).
+- `font.headers` is `{}` (not `undefined`) before loading; `font.charset` is a canonical key (`'iso10646'` by default).
+- `char2cp` / `cp2char` / `glyph.chr()` return `null` when not representable (no exceptions); no `iconv` needed for legacy charsets.
+- Glyphs from `glyphbycp` / `glyph` / `iterglyphs` are attached: editing methods write back to the font.
+- `Bitmap.tosvg()` path output is now one merged outline (`M…H…V…Z`); `draw2canvas` takes an options object (old signature still accepted).
+- Warnings go through `setWarningHandler` instead of `console.warn` directly.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+## License
+
+MIT © [Tom Chen](https://github.com/tomchen/). The test and example fonts are
+GNU Unifont (SIL OFL 1.1 / GPLv2+ with font embedding exception) and
+HanWangYanKai (GPL); see [test/fonts/README.md](test/fonts/README.md).

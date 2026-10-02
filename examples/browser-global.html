@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bdfparser — classic script (global build)</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 2rem auto;
+        max-width: 48rem;
+        padding: 0 1rem;
+        color: #222;
+      }
+      label {
+        display: inline-block;
+        margin: 0 1rem 0.5rem 0;
+      }
+      input[type='number'] {
+        width: 4rem;
+      }
+      canvas {
+        border: 1px solid #ccc;
+        image-rendering: pixelated;
+        max-width: 100%;
+      }
+      pre {
+        font-size: 10px;
+        line-height: 10px;
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>bdfparser — <code>&lt;script src&gt;</code></h1>
+    <p>
+      The IIFE build defines a global <code>bdfparser</code>. Serve this folder
+      with any static server (e.g. <code>npx serve ..</code> from the repo root)
+      and open <code>/examples/browser-global.html</code>.
+    </p>
+
+    <p>
+      <label>Text <input id="text" value="Hello, 你好!" /></label>
+      <label>x <input id="x" type="number" value="8" /></label>
+      <label>y <input id="y" type="number" value="8" /></label>
+      <label
+        >Pixel size <input id="ps" type="number" min="1" value="4"
+      /></label>
+    </p>
+    <canvas id="canvas" width="640" height="96"></canvas>
+    <pre id="ascii"></pre>
+
+    <!-- From a CDN (jsDelivr or unpkg): -->
+    <script src="https://cdn.jsdelivr.net/npm/bdfparser@3/dist/bdfparser.global.js"></script>
+    <!-- <script src="https://unpkg.com/bdfparser@3/dist/bdfparser.global.js"></script> -->
+    <!-- Or the local build (run `bun run build` first): -->
+    <!-- <script src="../dist/bdfparser.global.js"></script> -->
+
+    <script>
+      const { $Font } = bdfparser
+
+      const $ = (id) => document.getElementById(id)
+      const canvas = $('canvas')
+      const ctx = canvas.getContext('2d')
+      let font
+
+      function render() {
+        if (!font) return
+        const bitmap = font.draw($('text').value)
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        // draw the bitmap with its top-left corner at (x, y), each font pixel
+        // being a `pixelsize` × `pixelsize` square
+        bitmap.draw2canvas(ctx, {
+          x: Number($('x').value),
+          y: Number($('y').value),
+          pixelsize: Number($('ps').value),
+          pixelcolors: { 0: null, 1: '#1a1a2e', 2: '#e94560' },
+        })
+        $('ascii').textContent = bitmap.toString()
+      }
+
+      // fetches the file (BDF, PCF, .pcf.gz or TTF) relative to this page
+      $Font(new URL('fonts/unifont-subset.bdf', location.href))
+        .then((f) => {
+          font = f
+          render()
+        })
+        .catch((e) => {
+          $('ascii').textContent = String(e)
+        })
+
+      for (const id of ['text', 'x', 'y', 'ps']) {
+        $(id).addEventListener('input', render)
+      }
+    </script>
+  </body>
+</html>

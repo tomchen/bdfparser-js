@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bdfparser — LED dot-matrix display</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        background: #111;
+        color: #ddd;
+        font-family: system-ui, sans-serif;
+        margin: 2rem auto;
+        max-width: 60rem;
+        padding: 0 1rem;
+      }
+      .panel {
+        background: #050505;
+        border: 6px solid #2a2a2a;
+        border-radius: 8px;
+        box-shadow: 0 0 0 1px #000 inset;
+        display: inline-block;
+        max-width: 100%;
+        overflow-x: auto;
+        padding: 8px;
+      }
+      canvas {
+        display: block;
+      }
+      form {
+        display: grid;
+        gap: 0.5rem 1rem;
+        grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+        margin: 1rem 0;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        font-size: 0.85rem;
+        gap: 0.2rem;
+      }
+      input[type='text'] {
+        grid-column: 1 / -1;
+      }
+      code {
+        color: #ffb347;
+      }
+      pre {
+        background: #1b1b1b;
+        font-size: 12px;
+        overflow-x: auto;
+        padding: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>LED dot-matrix display</h1>
+    <p>
+      Text rendered with a BDF font, placed at <code>(x, y)</code> on a
+      <code>cols × rows</code> LED matrix with round dots, optionally scrolling
+      as a marquee. The frame is a plain <code>Bitmap</code>, so the same data
+      can be sent to real hardware (see <code>frameToBytes()</code> below).
+    </p>
+
+    <div class="panel"><canvas id="leds"></canvas></div>
+
+    <form id="form">
+      <label style="grid-column: 1 / -1"
+        >Text <input id="text" type="text" value="bdfparser ♥ LED 你好"
+      /></label>
+      <label
+        >Columns <input id="cols" type="number" min="8" value="96"
+      /></label>
+      <label>Rows <input id="rows" type="number" min="8" value="20" /></label>
+      <label>x (LEDs) <input id="x" type="number" value="2" /></label>
+      <label>y (LEDs, top) <input id="y" type="number" value="2" /></label>
+      <label
+        >LED pitch (px) <input id="pitch" type="number" min="3" value="8"
+      /></label>
+      <label
+        >LED size (% of pitch)
+        <input id="dot" type="range" min="30" max="100" value="80"
+      /></label>
+      <label>Color <input id="color" type="color" value="#ff3b1f" /></label>
+      <label
+        >Scroll speed (LEDs/s, 0 = static)
+        <input id="speed" type="number" min="0" value="12"
+      /></label>
+    </form>
+
+    <pre id="bytes"></pre>
+
+    <script type="module">
+      import {
+        $Font,
+        Bitmap,
+      } from 'https://cdn.jsdelivr.net/npm/bdfparser@3/+esm'
+      // Local build alternative (run `bun run build` first):
+      // import { $Font, Bitmap } from '../dist/index.js'
+
+      const font = await $Font(
+        new URL('fonts/unifont-subset.bdf', location.href)
+      )
+
+      const $ = (id) => document.getElementById(id)
+      const num = (id) => Number($(id).value)
+      const canvas = $('leds')
+      const ctx = canvas.getContext('2d')
+
+      let textBitmap = font.draw($('text').value)
+      let scrollX = 0 // current scroll offset in LEDs (fractional)
+      let last = performance.now()
+
+      /**
+       * Build one frame: a cols × rows bitmap with the text pasted with its
+       * top-left corner at (x, y) — `paste()` uses top-left pixel coordinates
+       * and clips everything outside the matrix.
+       */
+      function frame(cols, rows, x, y) {
+        return Bitmap.blank(cols, rows).paste(textBitmap, x, y)
+      }
+
+      /** Draw a frame as round LEDs (lit and unlit) */
+      function drawLeds(bm) {
+        const pitch = num('pitch')
+        const r = (pitch * num('dot')) / 200
+        const w = bm.width() * pitch
+        const h = bm.height() * pitch
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w
+          canvas.height = h
+        }
+        ctx.fillStyle = '#050505'
+        ctx.fillRect(0, 0, w, h)
+        const on = $('color').value
+        bm.bindata.forEach((row, j) => {
+          for (let i = 0; i < row.length; i++) {
+            const lit = row[i] !== '0'
+            ctx.beginPath()
+            ctx.arc(
+              i * pitch + pitch / 2,
+              j * pitch + pitch / 2,
+              r,
+              0,
+              Math.PI * 2
+            )
+            ctx.fillStyle = lit ? on : '#1e1414'
+            ctx.shadowColor = lit ? on : 'transparent'
+            ctx.shadowBlur = lit ? pitch : 0
+            ctx.fill()
+          }
+        })
+        ctx.shadowBlur = 0
+      }
+
+      /**
+       * Pack a frame into bytes, row by row, 8 LEDs per byte, MSB first — a
+       * common format for MAX7219 / HUB75 style drivers. Send it to your
+       * device e.g. with `fetch('/frame', { method: 'POST', body: bytes })`,
+       * a WebSocket, or Web Serial.
+       */
+      function frameToBytes(bm) {
+        const bytesPerRow = Math.ceil(bm.width() / 8)
+        const out = new Uint8Array(bytesPerRow * bm.height())
+        bm.bindata.forEach((row, j) => {
+          for (let i = 0; i < row.length; i++) {
+            if (row[i] !== '0')
+              out[j * bytesPerRow + (i >> 3)] |= 0x80 >> (i & 7)
+          }
+        })
+        return out
+      }
+
+      function tick(now) {
+        const dt = (now - last) / 1000
+        last = now
+        const cols = num('cols')
+        const rows = num('rows')
+        const speed = num('speed')
+        let x = num('x')
+        if (speed > 0) {
+          // marquee: start at the right edge, scroll left, wrap around
+          scrollX = (scrollX + speed * dt) % (cols + textBitmap.width())
+          x = cols - Math.floor(scrollX)
+        }
+        const bm = frame(cols, rows, x, num('y'))
+        drawLeds(bm)
+        const bytes = frameToBytes(bm)
+        $('bytes').textContent =
+          `frame ${cols}×${rows}, text at x=${x}, y=${num('y')} → ${bytes.length} bytes\n` +
+          Array.from(bytes.slice(0, 48), (b) =>
+            b.toString(16).padStart(2, '0')
+          ).join(' ') +
+          (bytes.length > 48 ? ' …' : '')
+        requestAnimationFrame(tick)
+      }
+
+      $('text').addEventListener('input', () => {
+        textBitmap = font.draw($('text').value)
+      })
+      $('form').addEventListener('submit', (e) => e.preventDefault())
+      requestAnimationFrame(tick)
+    </script>
+  </body>
+</html>

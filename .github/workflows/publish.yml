@@ -25,6 +25,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
       - uses: actions/checkout@v4
       - name: Setup .npmrc file to publish to npm
         uses: actions/setup-node@v4
@@ -32,9 +35,9 @@ jobs:
           node-version: '22.x'
           registry-url: 'https://registry.npmjs.org'
       - name: Install modules
-        run: npm install
+        run: bun install --frozen-lockfile
       - name: Build
-        run: npm run build
+        run: bun run build
       - name: Publish to npm
         run: npm publish --access public
         env:
@@ -45,7 +48,7 @@ jobs:
           node-version: '22.x'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@tomchen'
-      - run: npm run addscope
+      - run: bun run addscope
       - name: Publish to GitHub Packages
         run: npm publish
         env:

@@ -1,6 +1,13 @@
 import { Font, Glyph } from '../src/index'
 import readlineiter from 'readlineiter'
-import { unifont_path, glyph_a_meta, missing_glyph_meta } from './info'
+import {
+  unifont_path,
+  glyph_a_meta,
+  missing_glyph_meta,
+  unifont_2atest_path,
+} from './info'
+import iconv from 'iconv-lite'
+import { writeFileSync } from 'fs'
 
 describe('Font loading', () => {
   let font
@@ -51,30 +58,30 @@ describe('Font', () => {
     test('props', () => {
       expect(font.props).toEqual({
         add_style_name: 'Sans Serif',
-        average_width: '80',
-        cap_height: '10',
+        average_width: 80,
+        cap_height: 10,
         charset_encoding: '1',
         charset_registry: 'ISO10646',
         copyright:
           'Copyright (C) 1998-2020 Roman Czyborra, Paul Hardy, Qianqian Fang, Andrew Miller, Johnnie Weaver, David Corbett, Rebecca Bettencourt, et al. License: SIL Open Font License version 1.1 and GPLv2+: GNU GPL version 2 or later <http://gnu.org/licenses/gpl.html> with the GNU Font Embedding Exception.',
-        default_char: '65533',
+        default_char: 65533,
         family_name: 'Unifont',
-        font_ascent: '14',
-        font_descent: '2',
+        font_ascent: 14,
+        font_descent: 2,
         font_type: 'Bitmap',
         font_version: '13.0.04',
         foundry: 'GNU',
-        pixel_size: '16',
-        point_size: '160',
-        resolution_x: '75',
-        resolution_y: '75',
+        pixel_size: 16,
+        point_size: 160,
+        resolution_x: 75,
+        resolution_y: 75,
         setwidth_name: 'Normal',
         slant: 'R',
         spacing: 'C',
-        underline_position: '-2',
-        underline_thickness: '1',
+        underline_position: -2,
+        underline_thickness: 1,
         weight_name: 'Medium',
-        x_height: '8',
+        x_height: 8,
       })
     })
 
@@ -593,6 +600,115 @@ describe('Font', () => {
       const drawall_bitmap_bindata = font.drawall({ linelimit: 700 }).bindata
       expect(drawall_bitmap_bindata[0].length).toEqual(688)
       expect(drawall_bitmap_bindata.length).toEqual(320)
+    })
+  })
+
+  describe('charsetconvert', () => {
+    test('charsetconvert', async () => {
+      const font = new Font()
+      ;(await font.load_filelines(readlineiter(unifont_path))).encoding({
+        iconv,
+      })
+      font.charsetconvert('gb2312')
+      expect(font.charset).toEqual('gb2312')
+      expect(font.props.charset_registry).toEqual('gb2312')
+      expect(font.props.charset_encoding).toEqual('0')
+      expect(font.glyph('的')?.draw().bindata).toEqual([
+        '0001000001000000',
+        '0001000001000000',
+        '0010000001000000',
+        '0111111001111100',
+        '0100001010000100',
+        '0100001010000100',
+        '0100001100000100',
+        '0100001001000100',
+        '0111111000100100',
+        '0100001000100100',
+        '0100001000000100',
+        '0100001000000100',
+        '0100001000000100',
+        '0111111000000100',
+        '0100001000101000',
+        '0000000000010000',
+      ])
+    })
+  })
+
+  describe('tosvgfont', () => {
+    let font2a
+
+    const multilineToOne = (str) =>
+      str
+        .split('\n')
+        .map((line) => line.trim())
+        .join(' ')
+
+    const head =
+      '<svg xmlns="http://www.w3.org/2000/svg" version="1.1"> <metadata> Title: Unifont Copyright: Copyright (C) 1998-2020 Roman Czyborra, Paul Hardy, Qianqian Fang, Andrew Miller, Johnnie Weaver, David Corbett, Rebecca Bettencourt, et al. License: SIL Open Font License version 1.1 and GPLv2+: GNU GPL version 2 or later &lt;http://gnu.org/licenses/gpl.html&gt; with the GNU Font Embedding Exception. </metadata> <defs> <font id="gnu-unifont-medium-r-normal-sans-16-160-75-75-c-80-iso10646-1" horiz-adv-x="16"> <font-face font-family="Unifont" font-weight="Medium" font-style="R" units-per-em="16" cap-height="10" x-height="8" ascent="14" descent="2" bbox="0 -2 16 16" underline-thickness="1" underline-position="-2" unicode-range="U+0002, U+FFFC" ></font-face> <missing-glyph horiz-adv-x="16" d="M0,0h16v16h-16z" /> <glyph glyph-name=".notdef" horiz-adv-x="16" d="M0,0h16v16h-16z" /> '
+
+    beforeEach(() => {
+      font2a = new Font()
+      return font2a.load_filelines(readlineiter(unifont_2atest_path))
+    })
+
+    test('defaults', async () => {
+      const svgStr = font2a.tosvgfont()
+      expect(multilineToOne(svgStr)).toEqual(
+        head +
+          '<glyph glyph-name="U+0002" horiz-adv-x="16" d="M0,15 L1,15 L1,16 L0,16 Z M2,15 L3,15 L3,16 L2,16 Z M4,15 L5,15 L5,16 L4,16 Z M6,15 L7,15 L7,16 L6,16 Z M8,15 L9,15 L9,16 L8,16 Z M10,15 L11,15 L11,16 L10,16 Z M12,15 L13,15 L13,16 L12,16 Z M14,15 L15,15 L15,16 L14,16 Z M15,14 L16,14 L16,15 L15,15 Z M0,13 L1,13 L1,14 L0,14 Z M15,12 L16,12 L16,13 L15,13 Z M0,11 L1,11 L1,12 L0,12 Z M2,10 L5,10 L5,11 L2,11 Z M6,10 L9,10 L9,11 L6,11 Z M10,9 L11,9 L11,11 L10,11 Z M13,9 L14,9 L14,11 L13,11 Z M15,10 L16,10 L16,11 L15,11 Z M0,9 L2,9 L2,10 L0,10 Z M7,6 L8,6 L8,10 L7,10 Z M2,8 L4,8 L4,9 L2,9 Z M11,8 L13,8 L13,9 L11,9 Z M15,8 L16,8 L16,9 L15,9 Z M0,7 L1,7 L1,8 L0,8 Z M4,7 L5,7 L5,8 L4,8 Z M10,6 L11,6 L11,8 L10,8 Z M13,6 L14,6 L14,8 L13,8 Z M1,6 L4,6 L4,7 L1,7 Z M15,6 L16,6 L16,7 L15,7 Z M0,5 L1,5 L1,6 L0,6 Z M15,4 L16,4 L16,5 L15,5 Z M0,3 L1,3 L1,4 L0,4 Z M15,2 L16,2 L16,3 L15,3 Z M0,1 L1,1 L1,2 L0,2 Z M1,0 L2,0 L2,1 L1,1 Z M3,0 L4,0 L4,1 L3,1 Z M5,0 L6,0 L6,1 L5,1 Z M7,0 L8,0 L8,1 L7,1 Z M9,0 L10,0 L10,1 L9,1 Z M11,0 L12,0 L12,1 L11,1 Z M13,0 L14,0 L14,1 L13,1 Z M15,0 L16,0 L16,1 L15,1 Z" ></glyph> <glyph glyph-name="U+FFFC" unicode="&#xfffc;" horiz-adv-x="16" d="M1,15 L2,15 L2,16 L1,16 Z M3,15 L4,15 L4,16 L3,16 Z M5,15 L6,15 L6,16 L5,16 Z M7,15 L8,15 L8,16 L7,16 Z M9,15 L10,15 L10,16 L9,16 Z M11,15 L12,15 L12,16 L11,16 Z M13,15 L14,15 L14,16 L13,16 Z M15,15 L16,15 L16,16 L15,16 Z M0,14 L1,14 L1,15 L0,15 Z M15,13 L16,13 L16,14 L15,14 Z M0,12 L1,12 L1,13 L0,13 Z M15,11 L16,11 L16,12 L15,12 Z M0,10 L1,10 L1,11 L0,11 Z M3,9 L4,9 L4,10 L3,10 Z M7,9 L9,9 L9,10 L7,10 Z M13,6 L14,6 L14,10 L13,10 Z M15,9 L16,9 L16,10 L15,10 Z M0,8 L1,8 L1,9 L0,9 Z M2,6 L3,6 L3,9 L2,9 Z M4,6 L5,6 L5,9 L4,9 Z M7,5 L8,5 L8,9 L7,9 Z M9,8 L10,8 L10,9 L9,9 Z M8,7 L9,7 L9,8 L8,8 Z M15,7 L16,7 L16,8 L15,8 Z M0,6 L1,6 L1,7 L0,7 Z M9,6 L10,6 L10,7 L9,7 Z M3,5 L4,5 L4,6 L3,6 Z M8,5 L9,5 L9,6 L8,6 Z M11,5 L13,5 L13,6 L11,6 Z M15,5 L16,5 L16,6 L15,6 Z M0,4 L1,4 L1,5 L0,5 Z M15,3 L16,3 L16,4 L15,4 Z M0,2 L1,2 L1,3 L0,3 Z M15,1 L16,1 L16,2 L15,2 Z M0,0 L1,0 L1,1 L0,1 Z M2,0 L3,0 L3,1 L2,1 Z M4,0 L5,0 L5,1 L4,1 Z M6,0 L7,0 L7,1 L6,1 Z M8,0 L9,0 L9,1 L8,1 Z M10,0 L11,0 L11,1 L10,1 Z M12,0 L13,0 L13,1 L12,1 Z M14,0 L15,0 L15,1 L14,1 Z" ></glyph> </font> </defs> </svg>'
+      )
+    })
+
+    test('pathOffsets: {y: -2}', async () => {
+      const svgStr = font2a.tosvgfont({
+        pathOffsets: { y: -2 },
+      })
+      expect(multilineToOne(svgStr)).toEqual(
+        head +
+          '<glyph glyph-name="U+0002" horiz-adv-x="16" d="M0,13 L1,13 L1,14 L0,14 Z M2,13 L3,13 L3,14 L2,14 Z M4,13 L5,13 L5,14 L4,14 Z M6,13 L7,13 L7,14 L6,14 Z M8,13 L9,13 L9,14 L8,14 Z M10,13 L11,13 L11,14 L10,14 Z M12,13 L13,13 L13,14 L12,14 Z M14,13 L15,13 L15,14 L14,14 Z M15,12 L16,12 L16,13 L15,13 Z M0,11 L1,11 L1,12 L0,12 Z M15,10 L16,10 L16,11 L15,11 Z M0,9 L1,9 L1,10 L0,10 Z M2,8 L5,8 L5,9 L2,9 Z M6,8 L9,8 L9,9 L6,9 Z M10,7 L11,7 L11,9 L10,9 Z M13,7 L14,7 L14,9 L13,9 Z M15,8 L16,8 L16,9 L15,9 Z M0,7 L2,7 L2,8 L0,8 Z M7,4 L8,4 L8,8 L7,8 Z M2,6 L4,6 L4,7 L2,7 Z M11,6 L13,6 L13,7 L11,7 Z M15,6 L16,6 L16,7 L15,7 Z M0,5 L1,5 L1,6 L0,6 Z M4,5 L5,5 L5,6 L4,6 Z M10,4 L11,4 L11,6 L10,6 Z M13,4 L14,4 L14,6 L13,6 Z M1,4 L4,4 L4,5 L1,5 Z M15,4 L16,4 L16,5 L15,5 Z M0,3 L1,3 L1,4 L0,4 Z M15,2 L16,2 L16,3 L15,3 Z M0,1 L1,1 L1,2 L0,2 Z M15,0 L16,0 L16,1 L15,1 Z M0,-1 L1,-1 L1,0 L0,0 Z M1,-2 L2,-2 L2,-1 L1,-1 Z M3,-2 L4,-2 L4,-1 L3,-1 Z M5,-2 L6,-2 L6,-1 L5,-1 Z M7,-2 L8,-2 L8,-1 L7,-1 Z M9,-2 L10,-2 L10,-1 L9,-1 Z M11,-2 L12,-2 L12,-1 L11,-1 Z M13,-2 L14,-2 L14,-1 L13,-1 Z M15,-2 L16,-2 L16,-1 L15,-1 Z" ></glyph> <glyph glyph-name="U+FFFC" unicode="&#xfffc;" horiz-adv-x="16" d="M1,13 L2,13 L2,14 L1,14 Z M3,13 L4,13 L4,14 L3,14 Z M5,13 L6,13 L6,14 L5,14 Z M7,13 L8,13 L8,14 L7,14 Z M9,13 L10,13 L10,14 L9,14 Z M11,13 L12,13 L12,14 L11,14 Z M13,13 L14,13 L14,14 L13,14 Z M15,13 L16,13 L16,14 L15,14 Z M0,12 L1,12 L1,13 L0,13 Z M15,11 L16,11 L16,12 L15,12 Z M0,10 L1,10 L1,11 L0,11 Z M15,9 L16,9 L16,10 L15,10 Z M0,8 L1,8 L1,9 L0,9 Z M3,7 L4,7 L4,8 L3,8 Z M7,7 L9,7 L9,8 L7,8 Z M13,4 L14,4 L14,8 L13,8 Z M15,7 L16,7 L16,8 L15,8 Z M0,6 L1,6 L1,7 L0,7 Z M2,4 L3,4 L3,7 L2,7 Z M4,4 L5,4 L5,7 L4,7 Z M7,3 L8,3 L8,7 L7,7 Z M9,6 L10,6 L10,7 L9,7 Z M8,5 L9,5 L9,6 L8,6 Z M15,5 L16,5 L16,6 L15,6 Z M0,4 L1,4 L1,5 L0,5 Z M9,4 L10,4 L10,5 L9,5 Z M3,3 L4,3 L4,4 L3,4 Z M8,3 L9,3 L9,4 L8,4 Z M11,3 L13,3 L13,4 L11,4 Z M15,3 L16,3 L16,4 L15,4 Z M0,2 L1,2 L1,3 L0,3 Z M15,1 L16,1 L16,2 L15,2 Z M0,0 L1,0 L1,1 L0,1 Z M15,-1 L16,-1 L16,0 L15,0 Z M0,-2 L1,-2 L1,-1 L0,-1 Z M2,-2 L3,-2 L3,-1 L2,-1 Z M4,-2 L5,-2 L5,-1 L4,-1 Z M6,-2 L7,-2 L7,-1 L6,-1 Z M8,-2 L9,-2 L9,-1 L8,-1 Z M10,-2 L11,-2 L11,-1 L10,-1 Z M12,-2 L13,-2 L13,-1 L12,-1 Z M14,-2 L15,-2 L15,-1 L14,-1 Z" ></glyph> </font> </defs> </svg>'
+      )
+    })
+
+    test('unicodeAttr: {controlCharNoSkip: true, format: undefined}', async () => {
+      const svgStr = font2a.tosvgfont({
+        unicodeAttr: { controlCharNoSkip: true, format: undefined },
+      })
+      expect(multilineToOne(svgStr)).toEqual(
+        head +
+          '<glyph glyph-name="U+0002" unicode="&#x2;" horiz-adv-x="16" d="M0,15 L1,15 L1,16 L0,16 Z M2,15 L3,15 L3,16 L2,16 Z M4,15 L5,15 L5,16 L4,16 Z M6,15 L7,15 L7,16 L6,16 Z M8,15 L9,15 L9,16 L8,16 Z M10,15 L11,15 L11,16 L10,16 Z M12,15 L13,15 L13,16 L12,16 Z M14,15 L15,15 L15,16 L14,16 Z M15,14 L16,14 L16,15 L15,15 Z M0,13 L1,13 L1,14 L0,14 Z M15,12 L16,12 L16,13 L15,13 Z M0,11 L1,11 L1,12 L0,12 Z M2,10 L5,10 L5,11 L2,11 Z M6,10 L9,10 L9,11 L6,11 Z M10,9 L11,9 L11,11 L10,11 Z M13,9 L14,9 L14,11 L13,11 Z M15,10 L16,10 L16,11 L15,11 Z M0,9 L2,9 L2,10 L0,10 Z M7,6 L8,6 L8,10 L7,10 Z M2,8 L4,8 L4,9 L2,9 Z M11,8 L13,8 L13,9 L11,9 Z M15,8 L16,8 L16,9 L15,9 Z M0,7 L1,7 L1,8 L0,8 Z M4,7 L5,7 L5,8 L4,8 Z M10,6 L11,6 L11,8 L10,8 Z M13,6 L14,6 L14,8 L13,8 Z M1,6 L4,6 L4,7 L1,7 Z M15,6 L16,6 L16,7 L15,7 Z M0,5 L1,5 L1,6 L0,6 Z M15,4 L16,4 L16,5 L15,5 Z M0,3 L1,3 L1,4 L0,4 Z M15,2 L16,2 L16,3 L15,3 Z M0,1 L1,1 L1,2 L0,2 Z M1,0 L2,0 L2,1 L1,1 Z M3,0 L4,0 L4,1 L3,1 Z M5,0 L6,0 L6,1 L5,1 Z M7,0 L8,0 L8,1 L7,1 Z M9,0 L10,0 L10,1 L9,1 Z M11,0 L12,0 L12,1 L11,1 Z M13,0 L14,0 L14,1 L13,1 Z M15,0 L16,0 L16,1 L15,1 Z" ></glyph> <glyph glyph-name="U+FFFC" unicode="&#xfffc;" horiz-adv-x="16" d="M1,15 L2,15 L2,16 L1,16 Z M3,15 L4,15 L4,16 L3,16 Z M5,15 L6,15 L6,16 L5,16 Z M7,15 L8,15 L8,16 L7,16 Z M9,15 L10,15 L10,16 L9,16 Z M11,15 L12,15 L12,16 L11,16 Z M13,15 L14,15 L14,16 L13,16 Z M15,15 L16,15 L16,16 L15,16 Z M0,14 L1,14 L1,15 L0,15 Z M15,13 L16,13 L16,14 L15,14 Z M0,12 L1,12 L1,13 L0,13 Z M15,11 L16,11 L16,12 L15,12 Z M0,10 L1,10 L1,11 L0,11 Z M3,9 L4,9 L4,10 L3,10 Z M7,9 L9,9 L9,10 L7,10 Z M13,6 L14,6 L14,10 L13,10 Z M15,9 L16,9 L16,10 L15,10 Z M0,8 L1,8 L1,9 L0,9 Z M2,6 L3,6 L3,9 L2,9 Z M4,6 L5,6 L5,9 L4,9 Z M7,5 L8,5 L8,9 L7,9 Z M9,8 L10,8 L10,9 L9,9 Z M8,7 L9,7 L9,8 L8,8 Z M15,7 L16,7 L16,8 L15,8 Z M0,6 L1,6 L1,7 L0,7 Z M9,6 L10,6 L10,7 L9,7 Z M3,5 L4,5 L4,6 L3,6 Z M8,5 L9,5 L9,6 L8,6 Z M11,5 L13,5 L13,6 L11,6 Z M15,5 L16,5 L16,6 L15,6 Z M0,4 L1,4 L1,5 L0,5 Z M15,3 L16,3 L16,4 L15,4 Z M0,2 L1,2 L1,3 L0,3 Z M15,1 L16,1 L16,2 L15,2 Z M0,0 L1,0 L1,1 L0,1 Z M2,0 L3,0 L3,1 L2,1 Z M4,0 L5,0 L5,1 L4,1 Z M6,0 L7,0 L7,1 L6,1 Z M8,0 L9,0 L9,1 L8,1 Z M10,0 L11,0 L11,1 L10,1 Z M12,0 L13,0 L13,1 L12,1 Z M14,0 L15,0 L15,1 L14,1 Z" ></glyph> </font> </defs> </svg>'
+      )
+    })
+
+    test('pathOffsets: {x: -2, y: 4}, unicodeAttr: {controlCharNoSkip: true, format: "decncr"}', async () => {
+      const svgStr = font2a.tosvgfont({
+        pathOffsets: { x: -2, y: 4 },
+        unicodeAttr: { controlCharNoSkip: true, format: 'decncr' },
+      })
+      expect(multilineToOne(svgStr)).toEqual(
+        head +
+          '<glyph glyph-name="U+0002" unicode="&#2;" horiz-adv-x="16" d="M-2,19 L-1,19 L-1,20 L-2,20 Z M0,19 L1,19 L1,20 L0,20 Z M2,19 L3,19 L3,20 L2,20 Z M4,19 L5,19 L5,20 L4,20 Z M6,19 L7,19 L7,20 L6,20 Z M8,19 L9,19 L9,20 L8,20 Z M10,19 L11,19 L11,20 L10,20 Z M12,19 L13,19 L13,20 L12,20 Z M13,18 L14,18 L14,19 L13,19 Z M-2,17 L-1,17 L-1,18 L-2,18 Z M13,16 L14,16 L14,17 L13,17 Z M-2,15 L-1,15 L-1,16 L-2,16 Z M0,14 L3,14 L3,15 L0,15 Z M4,14 L7,14 L7,15 L4,15 Z M8,13 L9,13 L9,15 L8,15 Z M11,13 L12,13 L12,15 L11,15 Z M13,14 L14,14 L14,15 L13,15 Z M-2,13 L0,13 L0,14 L-2,14 Z M5,10 L6,10 L6,14 L5,14 Z M0,12 L2,12 L2,13 L0,13 Z M9,12 L11,12 L11,13 L9,13 Z M13,12 L14,12 L14,13 L13,13 Z M-2,11 L-1,11 L-1,12 L-2,12 Z M2,11 L3,11 L3,12 L2,12 Z M8,10 L9,10 L9,12 L8,12 Z M11,10 L12,10 L12,12 L11,12 Z M-1,10 L2,10 L2,11 L-1,11 Z M13,10 L14,10 L14,11 L13,11 Z M-2,9 L-1,9 L-1,10 L-2,10 Z M13,8 L14,8 L14,9 L13,9 Z M-2,7 L-1,7 L-1,8 L-2,8 Z M13,6 L14,6 L14,7 L13,7 Z M-2,5 L-1,5 L-1,6 L-2,6 Z M-1,4 L0,4 L0,5 L-1,5 Z M1,4 L2,4 L2,5 L1,5 Z M3,4 L4,4 L4,5 L3,5 Z M5,4 L6,4 L6,5 L5,5 Z M7,4 L8,4 L8,5 L7,5 Z M9,4 L10,4 L10,5 L9,5 Z M11,4 L12,4 L12,5 L11,5 Z M13,4 L14,4 L14,5 L13,5 Z" ></glyph> <glyph glyph-name="U+FFFC" unicode="&#65532;" horiz-adv-x="16" d="M-1,19 L0,19 L0,20 L-1,20 Z M1,19 L2,19 L2,20 L1,20 Z M3,19 L4,19 L4,20 L3,20 Z M5,19 L6,19 L6,20 L5,20 Z M7,19 L8,19 L8,20 L7,20 Z M9,19 L10,19 L10,20 L9,20 Z M11,19 L12,19 L12,20 L11,20 Z M13,19 L14,19 L14,20 L13,20 Z M-2,18 L-1,18 L-1,19 L-2,19 Z M13,17 L14,17 L14,18 L13,18 Z M-2,16 L-1,16 L-1,17 L-2,17 Z M13,15 L14,15 L14,16 L13,16 Z M-2,14 L-1,14 L-1,15 L-2,15 Z M1,13 L2,13 L2,14 L1,14 Z M5,13 L7,13 L7,14 L5,14 Z M11,10 L12,10 L12,14 L11,14 Z M13,13 L14,13 L14,14 L13,14 Z M-2,12 L-1,12 L-1,13 L-2,13 Z M0,10 L1,10 L1,13 L0,13 Z M2,10 L3,10 L3,13 L2,13 Z M5,9 L6,9 L6,13 L5,13 Z M7,12 L8,12 L8,13 L7,13 Z M6,11 L7,11 L7,12 L6,12 Z M13,11 L14,11 L14,12 L13,12 Z M-2,10 L-1,10 L-1,11 L-2,11 Z M7,10 L8,10 L8,11 L7,11 Z M1,9 L2,9 L2,10 L1,10 Z M6,9 L7,9 L7,10 L6,10 Z M9,9 L11,9 L11,10 L9,10 Z M13,9 L14,9 L14,10 L13,10 Z M-2,8 L-1,8 L-1,9 L-2,9 Z M13,7 L14,7 L14,8 L13,8 Z M-2,6 L-1,6 L-1,7 L-2,7 Z M13,5 L14,5 L14,6 L13,6 Z M-2,4 L-1,4 L-1,5 L-2,5 Z M0,4 L1,4 L1,5 L0,5 Z M2,4 L3,4 L3,5 L2,5 Z M4,4 L5,4 L5,5 L4,5 Z M6,4 L7,4 L7,5 L6,5 Z M8,4 L9,4 L9,5 L8,5 Z M10,4 L11,4 L11,5 L10,5 Z M12,4 L13,4 L13,5 L12,5 Z" ></glyph> </font> </defs> </svg>'
+      )
+    })
+
+    test('pathOffsets: {}, unicodeAttr: {format: "char"}', async () => {
+      const svgStr = font2a.tosvgfont({
+        pathOffsets: {},
+        unicodeAttr: { format: 'char' },
+      })
+      expect(multilineToOne(svgStr)).toEqual(
+        head +
+          '<glyph glyph-name="U+0002" horiz-adv-x="16" d="M0,15 L1,15 L1,16 L0,16 Z M2,15 L3,15 L3,16 L2,16 Z M4,15 L5,15 L5,16 L4,16 Z M6,15 L7,15 L7,16 L6,16 Z M8,15 L9,15 L9,16 L8,16 Z M10,15 L11,15 L11,16 L10,16 Z M12,15 L13,15 L13,16 L12,16 Z M14,15 L15,15 L15,16 L14,16 Z M15,14 L16,14 L16,15 L15,15 Z M0,13 L1,13 L1,14 L0,14 Z M15,12 L16,12 L16,13 L15,13 Z M0,11 L1,11 L1,12 L0,12 Z M2,10 L5,10 L5,11 L2,11 Z M6,10 L9,10 L9,11 L6,11 Z M10,9 L11,9 L11,11 L10,11 Z M13,9 L14,9 L14,11 L13,11 Z M15,10 L16,10 L16,11 L15,11 Z M0,9 L2,9 L2,10 L0,10 Z M7,6 L8,6 L8,10 L7,10 Z M2,8 L4,8 L4,9 L2,9 Z M11,8 L13,8 L13,9 L11,9 Z M15,8 L16,8 L16,9 L15,9 Z M0,7 L1,7 L1,8 L0,8 Z M4,7 L5,7 L5,8 L4,8 Z M10,6 L11,6 L11,8 L10,8 Z M13,6 L14,6 L14,8 L13,8 Z M1,6 L4,6 L4,7 L1,7 Z M15,6 L16,6 L16,7 L15,7 Z M0,5 L1,5 L1,6 L0,6 Z M15,4 L16,4 L16,5 L15,5 Z M0,3 L1,3 L1,4 L0,4 Z M15,2 L16,2 L16,3 L15,3 Z M0,1 L1,1 L1,2 L0,2 Z M1,0 L2,0 L2,1 L1,1 Z M3,0 L4,0 L4,1 L3,1 Z M5,0 L6,0 L6,1 L5,1 Z M7,0 L8,0 L8,1 L7,1 Z M9,0 L10,0 L10,1 L9,1 Z M11,0 L12,0 L12,1 L11,1 Z M13,0 L14,0 L14,1 L13,1 Z M15,0 L16,0 L16,1 L15,1 Z" ></glyph> <glyph glyph-name="U+FFFC" unicode="￼" horiz-adv-x="16" d="M1,15 L2,15 L2,16 L1,16 Z M3,15 L4,15 L4,16 L3,16 Z M5,15 L6,15 L6,16 L5,16 Z M7,15 L8,15 L8,16 L7,16 Z M9,15 L10,15 L10,16 L9,16 Z M11,15 L12,15 L12,16 L11,16 Z M13,15 L14,15 L14,16 L13,16 Z M15,15 L16,15 L16,16 L15,16 Z M0,14 L1,14 L1,15 L0,15 Z M15,13 L16,13 L16,14 L15,14 Z M0,12 L1,12 L1,13 L0,13 Z M15,11 L16,11 L16,12 L15,12 Z M0,10 L1,10 L1,11 L0,11 Z M3,9 L4,9 L4,10 L3,10 Z M7,9 L9,9 L9,10 L7,10 Z M13,6 L14,6 L14,10 L13,10 Z M15,9 L16,9 L16,10 L15,10 Z M0,8 L1,8 L1,9 L0,9 Z M2,6 L3,6 L3,9 L2,9 Z M4,6 L5,6 L5,9 L4,9 Z M7,5 L8,5 L8,9 L7,9 Z M9,8 L10,8 L10,9 L9,9 Z M8,7 L9,7 L9,8 L8,8 Z M15,7 L16,7 L16,8 L15,8 Z M0,6 L1,6 L1,7 L0,7 Z M9,6 L10,6 L10,7 L9,7 Z M3,5 L4,5 L4,6 L3,6 Z M8,5 L9,5 L9,6 L8,6 Z M11,5 L13,5 L13,6 L11,6 Z M15,5 L16,5 L16,6 L15,6 Z M0,4 L1,4 L1,5 L0,5 Z M15,3 L16,3 L16,4 L15,4 Z M0,2 L1,2 L1,3 L0,3 Z M15,1 L16,1 L16,2 L15,2 Z M0,0 L1,0 L1,1 L0,1 Z M2,0 L3,0 L3,1 L2,1 Z M4,0 L5,0 L5,1 L4,1 Z M6,0 L7,0 L7,1 L6,1 Z M8,0 L9,0 L9,1 L8,1 Z M10,0 L11,0 L11,1 L10,1 Z M12,0 L13,0 L13,1 L12,1 Z M14,0 L15,0 L15,1 L14,1 Z" ></glyph> </font> </defs> </svg>'
+      )
+    })
+
+    test('generate font', async () => {
+      const myfonttest = await new Font().load_filelines(
+        readlineiter('./test/fonts/unifont-13.0.04-for-test.bdf')
+      )
+      const svgStr = myfonttest.tosvgfont({
+        pathOffsets: { y: -2 },
+      })
+      writeFileSync('./temp/unifont-13.0.04-for-test.svg', svgStr)
     })
   })
 })

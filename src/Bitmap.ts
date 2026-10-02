@@ -243,7 +243,7 @@ export class Bitmap {
    * @param bitmaplist - List of bitmaps to concatenate
    * @param options.direction - Direction
    * @param options.align - Align
-   * @param options.offsetlist - List of spacing offsets between every two glyphs
+   * @param options.offsetlist - List of spacing offsets between every two bitmaps
    *
    * @returns `Bitmap` object
    *
@@ -353,7 +353,7 @@ export class Bitmap {
    * @param bitmap - Bitmap to concatenate
    * @param options.direction - Direction
    * @param options.align - Align
-   * @param options.offset - Spacing offset between the glyphs
+   * @param options.offset - Spacing offset between the bitmaps
    *
    * @returns The `Bitmap` object itself, which now has the combined bitmap as its `.bindata`
    *
@@ -658,5 +658,125 @@ export class Bitmap {
       })
     })
     return this
+  }
+
+  /**
+   * Convert bitmap to SVG string
+   *
+   * Converts bitmap to an SVG string without smoothing the path, vectorizing it while maintaining a pixelated effect
+   *
+   * @param pixelSize - Nominal pixel size in the SVG, default to 1
+   * @param format - Format of the SVG string, could be:
+   * - 'rect' (SVG is made of `<rect>` elements),
+   * - 'path' (SVG is made of a single `<path>` element),
+   * - 'pathOnly' (only return the path data)
+   * @param inverted - Invert the SVG (upside down) (needed in SVG font), default to false
+   * @param offsets - Offsets (to the right (x) top (y)) to apply to SVG paths, default to `{ x: 0, y: 0 }`
+   *
+   * @returns SVG string (or path data, depending on `format`)
+   */
+  tosvg = (
+    pixelSize = 1,
+    format: 'rect' | 'path' | 'pathOnly' = 'path',
+    inverted = false,
+    offsets: { x?: number; y?: number } = { x: 0, y: 0 }
+  ): string => {
+    const bitmap = this.bindata
+    if (!bitmap || bitmap.length === 0 || bitmap[0].length === 0) {
+      return ''
+    }
+
+    const xOffset = offsets.x ?? 0
+    const yOffset = offsets.y ?? 0
+
+    const height = bitmap.length
+    const width = bitmap[0].length
+    const rects = []
+
+    const visited = Array(height)
+      .fill(null)
+      .map(() => Array(width).fill(false))
+
+    const colorMap: { [key: string]: string } = {
+      '1': '#000000',
+      '0': '#FFFFFF',
+    }
+
+    const svgWidth = width * pixelSize
+    const svgHeight = height * pixelSize
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (!visited[y][x]) {
+          const currentColor = colorMap[bitmap[y][x]]
+
+          let maxWidth = 1
+          while (
+            x + maxWidth < width &&
+            bitmap[y][x + maxWidth] === bitmap[y][x] &&
+            !visited[y][x + maxWidth]
+          ) {
+            maxWidth++
+          }
+
+          let maxHeight = 1
+          outer: while (y + maxHeight < height) {
+            for (let dx = 0; dx < maxWidth; dx++) {
+              if (
+                bitmap[y + maxHeight][x + dx] !== bitmap[y][x] ||
+                visited[y + maxHeight][x + dx]
+              ) {
+                break outer
+              }
+            }
+            maxHeight++
+          }
+
+          for (let dy = 0; dy < maxHeight; dy++) {
+            for (let dx = 0; dx < maxWidth; dx++) {
+              visited[y + dy][x + dx] = true
+            }
+          }
+
+          if (currentColor !== '#FFFFFF') {
+            rects.push({
+              x: x * pixelSize + xOffset,
+              y:
+                (inverted
+                  ? svgHeight - y * pixelSize - maxHeight * pixelSize
+                  : y * pixelSize) + yOffset,
+              width: maxWidth * pixelSize,
+              height: maxHeight * pixelSize,
+              color: currentColor,
+            })
+          }
+        }
+      }
+    }
+
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}">`
+
+    if (format === 'rect') {
+      svg += rects
+        .map((rect) => {
+          return `<rect x="${rect.x}" y="${rect.y}" width="${rect.width}" height="${rect.height}" fill="${rect.color}" />`
+        })
+        .join('')
+    } else {
+      const path = rects
+        .map((rect) => {
+          return `M${rect.x},${rect.y} L${rect.x + rect.width},${rect.y} L${
+            rect.x + rect.width
+          },${rect.y + rect.height} L${rect.x},${rect.y + rect.height} Z`
+        })
+        .join(' ')
+      if (format === 'pathOnly') {
+        return path
+      } else {
+        svg += `<path d="${path}" fill="${colorMap[1]}" />`
+      }
+    }
+    svg += `</svg>`
+    return svg
   }
 }

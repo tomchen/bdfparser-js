@@ -4,10 +4,12 @@ import {
   DIRE_SHORTCUT_MAP,
   EMPTY_GLYPH,
   META_TITLES,
+  NO_QUOTE_PROPS,
   PATTERN_VVECTOR_DELIMITER,
 } from './constants'
 import { Glyph } from './Glyph'
 import {
+  setProperty,
   CodepointRangeType,
   DirectionNumberType,
   DirectionPartType,
@@ -21,7 +23,8 @@ import {
   Props,
   BdfHeaders,
 } from './types'
-import { setProperty } from './utils'
+import { char2cp, cp2char, sanitizeCharsetName } from './encoding'
+import iconvlite from 'iconv-lite'
 
 /**
  * `Font` object
@@ -37,6 +40,14 @@ export class Font {
   private __curline_startchar: string | null = null
   private __curline_chars: string | null = null
   private __f?: AsyncIterableIterator<string>
+  private __iconv?: typeof iconvlite
+  public charset = 'utf8'
+  public char2cp = (char: string): number | undefined => {
+    return char2cp(char, this.charset, this.__iconv)
+  }
+  public cp2char = (cp: number): string => {
+    return cp2char(cp, this.charset, this.__iconv)
+  }
 
   /**
    * Load the BDF font file (file line async iterator).
@@ -59,10 +70,47 @@ export class Font {
       if (typeof Deno !== 'undefined') {
         // Deno needs to run to the end and close the file
         if (this.__f !== undefined) {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
           for await (const _ of this.__f) {
           }
         }
       }
+    }
+    return this
+  }
+
+  /**
+   * Load encoding options
+   *
+   * Pass iconv instance, or define customized character and codepoint conversion methods, so a non-Unicode encoding can be used
+   *
+   * @param options - Encoding options
+   * @param options.iconv - iconv-lite instance
+   * @param options.charset - force a charset name
+   * @param options.char2cp - use a customized character to codepoint method
+   * @param options.cp2char - use a customized codepoint to character method
+   *
+   * @returns The current `Font` object
+   */
+  encoding(
+    options: {
+      iconv?: typeof iconvlite
+      charset?: string
+      char2cp?: (char: string) => number
+      cp2char?: (cp: number) => string
+    } = {}
+  ): this {
+    if (options.iconv !== undefined) {
+      this.__iconv = options.iconv
+    }
+    if (options.charset !== undefined) {
+      this.charset = options.charset
+    }
+    if (options.char2cp !== undefined) {
+      this.char2cp = options.char2cp
+    }
+    if (options.cp2char !== undefined) {
+      this.cp2char = options.cp2char
     }
     return this
   }
@@ -202,7 +250,13 @@ export class Font {
             value.replace(/^[\s"'\t\r\n]+|[\s"'\t\r\n]+$/g, '')
           )
         } else {
-          this.props[key.toLowerCase()] = value
+          this.props[key.toLowerCase()] = NO_QUOTE_PROPS.includes(key)
+            ? parseInt(value, 10)
+            : value.replace(/""/g, '"')
+
+          if (key === 'CHARSET_REGISTRY') {
+            this.charset = sanitizeCharsetName(value.replace(/""/g, '"'))
+          }
         }
       } else {
         if (l === 1) {
@@ -292,13 +346,6 @@ export class Font {
             glyph_codepoint = parseInt(value, 10)
             glyph_meta[1] = glyph_codepoint
             break
-          case 'BBX':
-            nlist = value.split(' ')
-            glyph_meta[2] = parseInt(nlist[0], 10)
-            glyph_meta[3] = parseInt(nlist[1], 10)
-            glyph_meta[4] = parseInt(nlist[2], 10)
-            glyph_meta[5] = parseInt(nlist[3], 10)
-            break
           case 'SWIDTH':
             nlist = value.split(' ')
             glyph_meta[6] = parseInt(nlist[0], 10)
@@ -323,6 +370,13 @@ export class Font {
             nlist = PATTERN_VVECTOR_DELIMITER.split(value)
             glyph_meta[14] = parseInt(nlist[0], 10)
             glyph_meta[15] = parseInt(nlist[1], 10)
+            break
+          case 'BBX':
+            nlist = value.split(' ')
+            glyph_meta[2] = parseInt(nlist[0], 10)
+            glyph_meta[3] = parseInt(nlist[1], 10)
+            glyph_meta[4] = parseInt(nlist[2], 10)
+            glyph_meta[5] = parseInt(nlist[3], 10)
             break
         }
       } else {
@@ -365,6 +419,30 @@ export class Font {
           `The glyph count next to 'CHARS' keyword is ${this.__glyph_count_to_check.toString()}, which does not match the actual glyph count ${l.toString()}`
         )
       }
+    }
+
+    if (this.charset === 'gb2312') {
+      for (const [cp] of this.glyphs) {
+        // Check if the cp is a 2-byte number (256 <= key <= 65535)
+        if (cp >= 0x100 && cp <= 0xffff) {
+          const high = (cp >> 8) & 0xff
+          const low = cp & 0xff
+          // Check ISO-2022-CN range
+          if (high >= 0x21 && high <= 0x7e && low >= 0x21 && low <= 0x7e) {
+            this.charset = 'iso2022cn'
+          }
+          break
+        }
+      }
+    }
+
+    if (
+      this.charset === 'iso8859' &&
+      this.props.charset_encoding &&
+      /^(?!0$)\d+$/.test(this.props.charset_encoding as string)
+    ) {
+      // check charset_encoding is non-0 pure number
+      this.charset = 'iso8859' + this.props.charset_encoding
     }
   }
 
@@ -472,11 +550,6 @@ export class Font {
     const b = this.glyphs.get(codepoint)
 
     if (b === undefined || b === null) {
-      console.warn(
-        `Glyph "${String.fromCodePoint(
-          codepoint
-        )}" (codepoint ${codepoint.toString()}) does not exist in the font. Will return 'null'`
-      )
       return null
     } else {
       const d: GlyphMetaTemp = {}
@@ -497,7 +570,7 @@ export class Font {
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#glyph}
    */
   glyph(character: string): Glyph | null {
-    const ret = character.codePointAt(0)
+    const ret = this.char2cp(character)
     return ret === undefined ? null : this.glyphbycp(ret)
   }
 
@@ -515,7 +588,7 @@ export class Font {
     const len = str.length
     for (let c, i = 0; i < len; i++) {
       c = str[i]
-      const cp = c.codePointAt(0)
+      const cp = this.char2cp(c)
       if (cp === undefined || !this.glyphs.has(cp)) {
         l.push(c)
       }
@@ -746,12 +819,11 @@ export class Font {
       options
     return this.drawcps(
       str.split('').map((c) => {
-        const cp = c.codePointAt(0)
+        const cp = this.char2cp(c)
         if (cp === undefined) {
-          return 8203
-        } else {
-          return cp
+          return 0 // .notdef glyph at codepoint 0
         }
+        return cp
       }),
       {
         linelimit,
@@ -796,5 +868,362 @@ export class Font {
       direction,
       usecurrentglyphspacing,
     })
+  }
+
+  /**
+   * Add a glyph to the font
+   *
+   * If the glyph's codepoint is taken, it replaces the original glyph
+   *
+   * @param glyph - Glyph object of the glyph to add
+   *
+   * @returns The current `Font` object
+   *
+   * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#removeglyph}
+   **/
+  addglyph(glyph: Glyph): Font {
+    if (this.glyphs.has(glyph.cp())) {
+      this.glyphs.delete(glyph.cp())
+    }
+    this.glyphs.set(glyph.cp(), Object.values(glyph.meta) as GlyphMetaInFont)
+    return this
+  }
+
+  /**
+   * Remove a glyph from the font
+   *
+   * @param cpOrGlyph - Codepoint or Glyph object of the glyph to remove
+   *
+   * @returns The current `Font` object
+   *
+   * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#removeglyph}
+   **/
+  removeglyph(cpOrGlyph: number | Glyph): Font {
+    const codepoint = typeof cpOrGlyph === 'number' ? cpOrGlyph : cpOrGlyph.cp()
+    if (this.glyphs.has(codepoint)) {
+      this.glyphs.delete(codepoint)
+    }
+    return this
+  }
+
+  /**
+   * Change to another charset for the font
+   *
+   * Change to another charset, rewrite `CHARSET_REGISTRY` and `CHARSET_ENCODING` properties, use the new charset to rewrite codepoints (`ENCODING`) of each glyph
+   *
+   * Pass iconv instance, or define customized character and codepoint conversion methods with `.encoding()`, so a non-Unicode encoding can be used
+   *
+   * @param newCharset - New charset
+   *
+   * @returns The current `Font` object
+   *
+   * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#charsetconvert}
+   **/
+  charsetconvert(newCharset: string): Font {
+    newCharset = sanitizeCharsetName(newCharset)
+    if (newCharset === sanitizeCharsetName(this.charset)) {
+      return this
+    }
+    const newGlyphs: Map<number, GlyphMetaInFont> = new Map()
+    for (const [, metaInFont] of this.glyphs) {
+      const newCp =
+        char2cp(this.cp2char(metaInFont[1]), newCharset, this.__iconv) ??
+        metaInFont[1]
+      metaInFont[1] = newCp
+      newGlyphs.set(newCp, metaInFont)
+    }
+    this.glyphs = newGlyphs
+    this.charset = newCharset
+    this.props.charset_registry = newCharset
+    this.props.charset_encoding = '0'
+    return this
+  }
+
+  /**
+   * Convert the font to a multiline string that can be saved as a BDF file
+   *
+   * @returns BDF string
+   *
+   * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#tobdf}
+   **/
+  tobdf(): string {
+    if (!this.headers) {
+      throw new Error('Font is not loaded')
+    }
+
+    const lines: string[] = []
+
+    lines.push(`STARTFONT ${this.headers.bdfversion}`)
+    lines.push(`FONT ${this.headers.fontname}`)
+    lines.push(
+      `SIZE ${this.headers.pointsize} ${this.headers.xres} ${this.headers.yres}`
+    )
+    lines.push(
+      `FONTBOUNDINGBOX ${this.headers.fbbx} ${this.headers.fbby} ${this.headers.fbbxoff} ${this.headers.fbbyoff}`
+    )
+
+    if (this.headers.comment) {
+      this.headers.comment.forEach((comment) => {
+        lines.push(`COMMENT "${comment}"`)
+      })
+    }
+
+    lines.push(`STARTPROPERTIES ${Object.keys(this.props).length}`)
+    for (const [key, value] of Object.entries(this.props)) {
+      if (value === null) {
+        lines.push(key.toUpperCase())
+      } else {
+        const shouldQuote = !NO_QUOTE_PROPS.includes(key.toUpperCase())
+        lines.push(
+          `${key.toUpperCase()} ${
+            shouldQuote && typeof value === 'string' ? `"${value}"` : value
+          }`
+        )
+      }
+    }
+    lines.push('ENDPROPERTIES')
+
+    lines.push(`CHARS ${this.glyphs.size}`)
+
+    for (const [cp, glyphMeta] of this.glyphs) {
+      lines.push(`STARTCHAR ${glyphMeta[0]}`)
+      lines.push(`ENCODING ${cp}`)
+
+      if (glyphMeta[6] !== null && glyphMeta[7] !== null) {
+        lines.push(`SWIDTH ${glyphMeta[6]} ${glyphMeta[7]}`)
+      }
+      if (glyphMeta[8] !== null && glyphMeta[9] !== null) {
+        lines.push(`DWIDTH ${glyphMeta[8]} ${glyphMeta[9]}`)
+      }
+      if (glyphMeta[10] !== null && glyphMeta[11] !== null) {
+        lines.push(`SWIDTH1 ${glyphMeta[10]} ${glyphMeta[11]}`)
+      }
+      if (glyphMeta[12] !== null && glyphMeta[13] !== null) {
+        lines.push(`DWIDTH1 ${glyphMeta[12]} ${glyphMeta[13]}`)
+      }
+      if (glyphMeta[14] !== null && glyphMeta[15] !== null) {
+        lines.push(`VVECTOR ${glyphMeta[14]} ${glyphMeta[15]}`)
+      }
+
+      lines.push(
+        `BBX ${glyphMeta[2]} ${glyphMeta[3]} ${glyphMeta[4]} ${glyphMeta[5]}`
+      )
+
+      lines.push('BITMAP')
+      lines.push(...glyphMeta[16])
+      lines.push('ENDCHAR')
+    }
+
+    lines.push('ENDFONT')
+    return lines.join('\n')
+  }
+
+  /**
+   * Convert the BDF font to SVG font string
+   *
+   * @param options - Options for SVG font
+   * @param options.pathOffsets.x - Offsets (to the right (x) top (y)) to apply to all glyphs' SVG paths, default to `{ x: 0, y: 0 }`
+   * @param options.pathOffsets.y - See above
+   * @param options.unicodeAttr.controlCharNoSkip - no `unicode` attribute for `<glyph>` of control character (only U+0000-U+000F), default to `false`
+   * - `false` is compatible with FontForge which can't load SVG font with control character `<glyph>` having `unicode` attribute
+   * - `true` is compatible with `svg2ttf` JavaScript library which skips control character `<glyph>` without `unicode` attribute
+   * @param options.unicodeAttr.format - Format of the `unicode` attribute for `<glyph>`, default to `'hexncr'`
+   * - `'hexncr'`: hex NCR, e.g. `unicode="&#x4ab;"`
+   * - `'decncr'`: decimal NCR, e.g. `unicode="&#1195;"`
+   * - `'char'`: character itself (with XML escape for a few characters), e.g. `unicode="a"`, `unicode="&amp;"`, `unicode="的"`
+   *
+   * @returns SVG font string
+   *
+   * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#tosvgfont}
+   */
+  tosvgfont(
+    options: {
+      pathOffsets?: { x?: number; y?: number }
+      unicodeAttr?: {
+        controlCharNoSkip?: boolean
+        format?: 'hexncr' | 'decncr' | 'char'
+      }
+    } = {}
+  ): string {
+    const xPathOffset = options.pathOffsets?.x ?? 0
+    const yPathOffset = options.pathOffsets?.y ?? 0
+    const unicodeAttrControlCharNoSkip =
+      options.unicodeAttr?.controlCharNoSkip ?? false
+    const unicodeAttrFormat = options.unicodeAttr?.format ?? 'hexncr'
+    const toXmlValue = (value: string | number) =>
+      value.toString().replace(
+        /[<>&"']/g,
+        (char) =>
+          ({
+            '<': '&lt;',
+            '>': '&gt;',
+            '&': '&amp;',
+            '"': '&quot;',
+            "'": '&apos;',
+          }[char as '<' | '>' | '&' | '"' | "'"])
+      )
+
+    const unitsPerEm =
+      Math.max(this.headers?.fbbx ?? 0, this.headers?.fbby ?? 0) || 100
+    const fontAscent =
+      parseInt(this.props.font_ascent?.toString() ?? '0', 10) ||
+      unitsPerEm * 0.8
+    const fontDescent =
+      parseInt(this.props.font_descent?.toString() ?? '0', 10) ||
+      -unitsPerEm * 0.2
+
+    let svg = '<svg xmlns="http://www.w3.org/2000/svg" version="1.1">\n'
+
+    const metadataLines = []
+    if (this.props.family_name || this.props.family) {
+      metadataLines.push(
+        `Title: ${this.props.family_name || this.props.family}`
+      )
+    }
+    if (this.props.creator) {
+      metadataLines.push(`Weight: ${this.props.weight_name}`)
+    }
+    if (this.props.creator) {
+      metadataLines.push(`Version: ${this.props.font_version}`)
+    }
+    if (this.props.creator) {
+      metadataLines.push(`Founfry: ${this.props.foundry}`)
+    }
+    if (this.props.copyright) {
+      metadataLines.push(`Copyright: ${this.props.copyright}`)
+    }
+    if (this.props.notice) {
+      metadataLines.push(`Notice: ${this.props.notice}`)
+    }
+    if (metadataLines.length > 0) {
+      svg +=
+        '<metadata>\n  ' +
+        toXmlValue(metadataLines.join('\n  ')) +
+        '\n</metadata>\n'
+    }
+
+    // Calculate unicode range from all glyphs
+    const unicodePoints = [...this.glyphs.keys()].sort((a, b) => a - b)
+    const ranges: string[] = []
+    let rangeStart = unicodePoints[0]
+    let prev = rangeStart
+    for (let i = 1; i <= unicodePoints.length; i++) {
+      const current = unicodePoints[i]
+      if (current !== prev + 1) {
+        const rangeEnd = prev
+        ranges.push(
+          rangeStart === rangeEnd
+            ? `U+${rangeStart.toString(16).toUpperCase().padStart(4, '0')}`
+            : `U+${rangeStart
+                .toString(16)
+                .toUpperCase()
+                .padStart(4, '0')}-${rangeEnd
+                .toString(16)
+                .toUpperCase()
+                .padStart(4, '0')}`
+        )
+        rangeStart = current
+      }
+      prev = current
+    }
+
+    svg += `<defs>
+  <font id="${toXmlValue(
+    (this.headers?.fontname || '').replace(/^-/, '').toLowerCase()
+  )}" horiz-adv-x="${this.headers?.dwx0 || unitsPerEm}">`
+
+    const fontFaceAttributes = {
+      'font-family':
+        this.props.family_name ||
+        this.props.family ||
+        this.headers?.fontname ||
+        '',
+      'font-weight': this.props.weight_name || 'normal',
+      'font-style': this.props.slant || 'normal',
+      'units-per-em': unitsPerEm,
+      'cap-height':
+        parseInt(this.props.cap_height?.toString() ?? '0', 10) || fontAscent,
+      'x-height':
+        parseInt(this.props.x_height?.toString() ?? '0', 10) ||
+        fontAscent * 0.5,
+      ascent: fontAscent,
+      descent: fontDescent,
+      bbox: `${this.headers?.fbbxoff || 0} ${this.headers?.fbbyoff || 0} ${
+        this.headers?.fbbx || unitsPerEm
+      } ${this.headers?.fbby || unitsPerEm}`,
+      'underline-thickness':
+        parseInt(this.props.underline_thickness?.toString() ?? '0', 10) ||
+        Math.round(unitsPerEm * 0.05),
+      'underline-position':
+        parseInt(this.props.underline_position?.toString() ?? '0', 10) ||
+        Math.round(-unitsPerEm * 0.075),
+      'unicode-range': ranges.join(', '),
+    }
+
+    svg += '\n<font-face\n'
+    for (const [key, value] of Object.entries(fontFaceAttributes)) {
+      if (value != null) {
+        svg += `  ${key}="${toXmlValue(value)}"\n`
+      }
+    }
+    svg += '></font-face>\n'
+
+    svg += `<missing-glyph horiz-adv-x="${
+      this.headers?.dwx0 || unitsPerEm
+    }" d="M0,0h${unitsPerEm}v${unitsPerEm}h-${unitsPerEm}z" />\n<glyph glyph-name=".notdef" horiz-adv-x="${
+      this.headers?.dwx0 || unitsPerEm
+    }" d="M0,0h${unitsPerEm}v${unitsPerEm}h-${unitsPerEm}z" />\n`
+
+    for (const glyph of this.iterglyphs()) {
+      if (glyph) {
+        const glyphPath = glyph.draw().tosvg(1, 'pathOnly', true, {
+          x: xPathOffset,
+          y: yPathOffset,
+        })
+        if (!glyphPath) {
+          continue
+        }
+
+        const glyphAttributes: Record<string, string | number> = {
+          'glyph-name': glyph.meta.glyphname,
+          ...(unicodeAttrControlCharNoSkip || glyph.meta.codepoint >= 32
+            ? {
+                unicode:
+                  unicodeAttrFormat === 'decncr'
+                    ? `&#${glyph.meta.codepoint};`
+                    : unicodeAttrFormat === 'char'
+                    ? toXmlValue(String.fromCodePoint(glyph.meta.codepoint))
+                    : `&#x${glyph.meta.codepoint.toString(16)};`,
+              }
+            : {}),
+          'horiz-adv-x': glyph.meta.dwx0 || this.headers?.dwx0 || unitsPerEm,
+          d: glyphPath,
+        }
+
+        if (glyph.meta.swy0) {
+          glyphAttributes['vert-adv-y'] = glyph.meta.swy0
+        }
+        if (glyph.meta.vvectorx) {
+          glyphAttributes['vert-origin-x'] = glyph.meta.vvectorx
+        }
+        if (glyph.meta.vvectory) {
+          glyphAttributes['vert-origin-y'] = glyph.meta.vvectory
+        }
+
+        svg += '<glyph\n'
+        for (const [key, value] of Object.entries(glyphAttributes)) {
+          if (value != null) {
+            svg += `  ${key}="${
+              key === 'unicode' ? value : toXmlValue(value)
+            }"\n`
+          }
+        }
+        svg += '></glyph>\n'
+      }
+    }
+
+    svg += '</font>\n</defs>\n</svg>'
+
+    return svg
   }
 }

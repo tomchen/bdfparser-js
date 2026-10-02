@@ -1,4 +1,7 @@
 export const unifont_path = './test/fonts/unifont-13.0.04-for-test.bdf'
+export const unifont_emptylines_path =
+  './test/fonts/unifont-13.0.04-for-test-emptylines.bdf'
+export const unifont_2atest_path = './test/fonts/unifont-13.0.04-2atest.bdf'
 
 // glyph 'a'
 export const glyph_a_meta = {

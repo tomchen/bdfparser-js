@@ -73,7 +73,7 @@ export class Glyph {
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/glyph#chr}
    */
   chr(): string {
-    return String.fromCodePoint(this.cp())
+    return this.font.cp2char(this.cp())
   }
 
   /**
@@ -218,5 +218,17 @@ export class Glyph {
         break
     }
     return _fromorigin ? ret : [0 - ret[0], 0 - ret[1]]
+  }
+
+  /**
+   * Change bitmap of the glyph
+   *
+   * @param bitmap - Bitmap object to change to
+   *
+   * @returns The `Glyph` object itself
+   */
+  changebitmap(bitmap: Bitmap): Glyph {
+    this.meta['hexdata'] = bitmap.todata(4)
+    return this
   }
 }

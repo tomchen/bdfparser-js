@@ -2,29 +2,30 @@ import { Bitmap } from './Bitmap'
 import { Font } from './Font'
 import { Glyph } from './Glyph'
 import { GlyphMeta } from './types'
-
-export const setProperty = <
-  O extends Record<PropertyKey, unknown>,
-  K extends keyof O
->(
-  obj: O,
-  key: K,
-  value: O[K]
-): void => {
-  obj[key] = value
-}
+import iconvlite from 'iconv-lite'
 
 /**
- * Shortcut for `new Font().load_filelines(filelines)` so you don't need to write `new` and `.load_filelines`
+ * Shortcut for `new Font().load_filelines(filelines).encoding(encodingOptions)`
  *
  * @param filelines - Asynchronous iterator containing each line in string text from the font file
+ * @param encodingOptions - Encoding options
+ * @param encodingOptions.iconv - iconv-lite instance
+ * @param encodingOptions.charset - force a charset name
+ * @param encodingOptions.char2cp - use a customized character to codepoint method
+ * @param encodingOptions.cp2char - use a customized codepoint to character method
  *
- * @returns The newly instantiated `Font` object that's loaded the font file
+ * @returns The newly instantiated `Font` object that's loaded the font file and encoding options
  */
 export const $Font = async (
-  filelines: AsyncIterableIterator<string>
+  filelines: AsyncIterableIterator<string>,
+  encodingOptions: {
+    iconv?: typeof iconvlite
+    charset?: string
+    char2cp?: (char: string) => number
+    cp2char?: (cp: number) => string
+  }
 ): Promise<Font> => {
-  return await new Font().load_filelines(filelines)
+  return (await new Font().load_filelines(filelines)).encoding(encodingOptions)
 }
 
 /**

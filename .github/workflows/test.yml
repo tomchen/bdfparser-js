@@ -31,15 +31,18 @@ jobs:
         node: [12.x, 14.x, 16.x, 18.x, 20.x, 22.x, 23.x]
 
     steps:
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
       - uses: actions/checkout@v4
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
       - name: Install modules
-        run: yarn
+        run: bun install --frozen-lockfile
       - name: Run tests
-        run: yarn test
+        run: bun run test
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         if: github.event_name == 'push' && matrix.os == 'ubuntu-latest' && matrix.node == '22.x'

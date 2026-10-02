@@ -1,5 +1,16 @@
 import { DIRE_MAP, DIRE_SHORTCUT_MAP } from './constants'
 
+export const setProperty = <
+  O extends Record<PropertyKey, unknown>,
+  K extends keyof O
+>(
+  obj: O,
+  key: K,
+  value: O[K]
+): void => {
+  obj[key] = value
+}
+
 export type BdfHeaders = {
   bdfversion: number
   fontname: string
@@ -26,7 +37,9 @@ export type BdfHeaders = {
 }
 export type BdfHeadersTemp = Partial<BdfHeaders>
 
-export type Props = Record<string, string | null> & { comment?: string[] }
+export type Props = Record<string, string | number | null> & {
+  comment?: string[]
+}
 
 export type GlyphMetaInFont = [
   string, // glyphname

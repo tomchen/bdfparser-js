@@ -6,6 +6,7 @@ import {
   bitmap_a_bindata,
   specfont_path,
 } from './info'
+import iconv from 'iconv-lite'
 
 describe('Glyph', () => {
   let font
@@ -13,7 +14,9 @@ describe('Glyph', () => {
 
   beforeEach(async () => {
     font = new Font()
-    await font.load_filelines(readlineiter(unifont_path))
+    await font.encoding({ iconv })
+      .load_filelines(readlineiter(unifont_path))
+
     glyph_a = new Glyph(glyph_a_meta, font)
     return
   })
@@ -174,7 +177,9 @@ describe('Glyph draw spec quoteright', () => {
 
   beforeEach(async () => {
     font = new Font()
-    await font.load_filelines(readlineiter(specfont_path))
+    await font.encoding({ iconv })
+      .load_filelines(readlineiter(specfont_path))
+
     glyph_qr = font.glyph("'")
     return
   })
@@ -272,7 +277,9 @@ describe('Glyph draw spec j', () => {
 
   beforeEach(async () => {
     font = new Font()
-    await font.load_filelines(readlineiter(specfont_path))
+    await font.encoding({ iconv })
+      .load_filelines(readlineiter(specfont_path))
+
     glyph_j = font.glyph('j')
     return
   })

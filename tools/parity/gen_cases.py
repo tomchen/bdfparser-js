@@ -1,0 +1,1444 @@
+#!/usr/bin/env python3
+"""
+Parity harness — case generator.
+
+Produces a JSONL file of test cases. Each case is
+    {"id", "kind", "font": <structured font spec or null>, "bdf": <text>,
+     ["bdf_b64"], ["bdf2"], ["file"], "ops": [...]}
+executed identically by run_py.py and run_js.ts.
+
+Random cases come from a seeded generator (case i uses seed `SEED * 1_000_003 + i`,
+so any case can be regenerated alone): random BDF fonts (random metrics incl.
+negative offsets, empty glyphs, unencoded glyphs with altcodes, odd widths,
+many properties incl. non-Adobe / quoted / escaped / key-only, comments, CRLF /
+CR line endings, blank lines, tabs, legacy charsets with valid codes) plus a
+random operation script.
+
+Corpus cases: every BDF / PCF / PCF.GZ / TTF file of both repositories' test
+font directories with a fixed operation script.
+
+Usage:
+    python gen_cases.py random  N SEED OUT.jsonl [--agreed agreed.json] [--avoid TAG,...|known] [--start K]
+    python gen_cases.py corpus  OUT.jsonl
+    python gen_cases.py tables-spec OUT.json
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import random
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+JSROOT = HERE.parent.parent
+PYROOT = JSROOT.parent / 'bdfparser'
+
+# ---------------------------------------------------------------------------
+# charsets
+
+# (CHARSET_REGISTRY, CHARSET_ENCODING, canonical key, GL form?) — every charset
+# of SPEC-v3 §4 as it appears in real BDF files
+FONT_CHARSETS = [
+    ('ISO10646', '1', 'iso10646', False),
+    (None, None, 'iso10646', False),
+    ('ISO8859', '1', 'iso88591', False),
+    ('ISO8859', '2', 'iso88592', False),
+    ('ISO8859', '5', 'iso88595', False),
+    ('ISO8859', '7', 'iso88597', False),
+    ('ISO8859', '9', 'iso88599', False),
+    ('ISO8859', '15', 'iso885915', False),
+    ('ISO646.1991', 'IRV', 'iso646', False),
+    ('KOI8', 'R', 'koi8r', False),
+    ('KOI8', 'U', 'koi8u', False),
+    ('MICROSOFT', 'CP1250', 'cp1250', False),
+    ('MICROSOFT', 'CP1251', 'cp1251', False),
+    ('MICROSOFT', 'CP1252', 'cp1252', False),
+    ('MICROSOFT', 'CP1253', 'cp1253', False),
+    ('MICROSOFT', 'CP1255', 'cp1255', False),
+    ('MICROSOFT', 'CP1257', 'cp1257', False),
+    ('GB2312.1980', '0', 'gb2312', True),
+    ('GB2312.1980', '1', 'gb2312', False),
+    ('GBK', '0', 'gbk', False),
+    ('GB18030', '0', 'gb18030', False),
+    ('JISX0208.1983', '0', 'jisx0208', True),
+    ('JISX0201.1976', '0', 'jisx0201', False),
+    ('KSC5601.1987', '0', 'ksc5601', True),
+    ('KSX1001', '0', 'ksc5601', True),
+    ('BIG5', '0', 'big5', False),
+    ('BIG5.ETEN', '0', 'big5', False),
+    ('BIG5HKSCS', '0', 'big5hkscs', False),
+    ('SJIS', '0', 'shiftjis', False),
+    ('FontSpecific', '0', 'fontspecific', False),
+]
+
+# names for the module-level / charsetconvert tests (canonical keys of FONT_CHARSETS)
+CONVERT_TARGETS = sorted({c[2] for c in FONT_CHARSETS if c[2] != 'fontspecific'} | {'iso2022cn'})
+GL_CAPABLE = {'gb2312', 'jisx0208', 'ksc5601', 'ksx1001'}
+FORCE_GL = {'iso2022cn'}
+
+# extra names only exercised by the table phase (documents codecs one side
+# knows and the other does not)
+EXTRA_TABLE_NAMES = [
+    'iso88593', 'iso88594', 'iso88596', 'iso88598', 'iso885910', 'iso885911', 'iso885913',
+    'iso885914', 'iso885916', 'cp1254', 'cp1256', 'cp1258', 'ascii', 'euccn', 'eucjp', 'euckr',
+    'tis620', 'macroman', 'cp866', 'cp874', 'cp932', 'cp936', 'cp949', 'cp950', 'hz',
+    'iso2022cn', 'utf16', 'ucs2', 'adobefontspecific', 'jisx0201',
+]
+
+
+# Trigger tags: features that are known to make the two implementations
+# diverge. Every generated case records the tags of the features it actually
+# contains (case['tags']); `--avoid TAG,...` (or `--avoid known`) stops
+# generating them so that a run can look for *new* divergences.
+TAGS: set[str] = set()
+AVOID: set[str] = set()
+ALL_TAGS = ['bigint', 'weirdkey', 'exotic', 'lenientint', 'negsize', 'overlay', 'stalehandle', 'ragged', 'charsetname']
+
+
+def tag(t: str) -> bool:
+    """Record tag `t` and return True if the feature may be generated."""
+    if t in AVOID:
+        return False
+    TAGS.add(t)
+    return True
+
+
+def table_id(key: str, gl: bool) -> str:
+    return key + ('/gl' if gl else '')
+
+
+def table_entries():
+    ents = {}
+    for _r, _e, key, gl in FONT_CHARSETS:
+        ents[table_id(key, gl)] = {'id': table_id(key, gl), 'name': key, 'gl': True if gl else None}
+    for key in CONVERT_TARGETS + EXTRA_TABLE_NAMES:
+        gl = key in GL_CAPABLE or key in FORCE_GL
+        ents.setdefault(table_id(key, gl), {'id': table_id(key, gl), 'name': key, 'gl': True if gl else None})
+        if gl:
+            ents.setdefault(table_id(key, False), {'id': table_id(key, False), 'name': key, 'gl': None})
+    for e in ents.values():
+        if e['name'] == 'gb18030':
+            e['extra_cps'] = [
+                (a << 24) | (b << 16) | (c << 8) | d
+                for a in range(0x81, 0x85)
+                for b in range(0x30, 0x3A)
+                for c in range(0x81, 0xFF, 5)
+                for d in range(0x30, 0x3A)
+            ] + [0x90308130, 0x95328236, 0xE3329A35, 0xFE39FE39]
+    return list(ents.values())
+
+
+def tables_spec():
+    cps = list(range(0x100))
+    cps += [(a << 8) | b for a in range(0x21, 0x7F) for b in range(0x21, 0x7F)]
+    cps += [(a << 8) | b for a in range(0x81, 0xFF) for b in range(0x40, 0xFF)]
+    cps += [0x10000, 0x10FFFF, 0x110000, 0xFFFFFFFF, -1]
+    chars = [c for c in range(0x10000) if not 0xD800 <= c <= 0xDFFF]
+    chars += [0x10000, 0x1F600, 0x20000, 0x2A6D6, 0x10FFFF]
+    return {'cps': cps, 'chars': chars, 'charsets': table_entries()}
+
+
+# ---------------------------------------------------------------------------
+# agreed-code tables (derived from the table phase; see compare.py)
+
+
+class Codes:
+    """Codepoints to use per charset table id: codes on which Python and JS agree."""
+
+    def __init__(self, agreed: dict | None):
+        self.agreed = agreed or {}
+        self.cache: dict[str, list[int]] = {}
+
+    def cps(self, tid: str) -> list[int]:
+        if tid in self.cache:
+            return self.cache[tid]
+        ent = self.agreed.get(tid)
+        if ent is not None:
+            lst = ent['cps']
+        else:  # fallback without table phase: Python-valid codes
+            lst = python_valid(tid)
+        self.cache[tid] = lst
+        return lst
+
+    def char_of(self, tid: str, cp: int) -> str | None:
+        ent = self.agreed.get(tid)
+        if ent is not None:
+            m = ent.get('_map')
+            if m is None:
+                m = ent['_map'] = dict(zip(ent['cps'], ent['chars'], strict=True))
+            return m.get(cp)
+        return python_char(tid, cp)
+
+    def bad_cps(self, tid: str) -> set[int]:
+        ent = self.agreed.get(tid)
+        if ent is None:
+            return set()
+        s = ent.get('_badcp')
+        if s is None:
+            s = ent['_badcp'] = set(ent.get('bad_cps', []))
+        return s
+
+    def bad_chars(self, tid: str) -> set[int]:
+        ent = self.agreed.get(tid)
+        if ent is None:
+            return set()
+        s = ent.get('_bad')
+        if s is None:
+            s = ent['_bad'] = set(ent['bad_chars'])
+        return s
+
+
+_PYCODEC = {}
+
+
+def _py_codec(tid):
+    if tid not in _PYCODEC:
+        sys.path.insert(0, str(PYROOT / 'src'))
+        from bdfparser.encoding import charset_codec
+
+        key, _, gl = tid.partition('/')
+        _PYCODEC[tid] = charset_codec(key, gl == 'gl' or None)
+    return _PYCODEC[tid]
+
+
+def python_char(tid, cp):
+    return _py_codec(tid).cp2char(cp)
+
+
+def python_valid(tid):
+    codec = _py_codec(tid)
+    spec = tables_spec()
+    return [cp for cp in spec['cps'] if cp >= 0 and codec.cp2char(cp) is not None and len(codec.cp2char(cp)) == 1]
+
+
+# ---------------------------------------------------------------------------
+# random font spec
+
+PROP_POOL_STR = [
+    'FOUNDRY', 'FAMILY_NAME', 'WEIGHT_NAME', 'SLANT', 'SETWIDTH_NAME', 'ADD_STYLE_NAME', 'SPACING',
+    'COPYRIGHT', 'NOTICE', 'FONT_VERSION', 'FAMILY', 'Copyright', 'FACE_NAME', 'FONTNAME_REGISTRY',
+]
+PROP_POOL_INT = [
+    'PIXEL_SIZE', 'POINT_SIZE', 'RESOLUTION_X', 'RESOLUTION_Y', 'AVERAGE_WIDTH', 'FONT_ASCENT',
+    'FONT_DESCENT', 'DEFAULT_CHAR', 'X_HEIGHT', 'CAP_HEIGHT', 'UNDERLINE_POSITION',
+    'UNDERLINE_THICKNESS', 'WEIGHT', 'QUAD_WIDTH', 'MinSpace', 'MaxSpace', 'NormSpace', 'RAW_ASCENT',
+]
+WEIRD_KEYS = ['comment', '123', '7', 'constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']
+EXOTIC_WS = [' ', '　', ' ', '\x85', '\x1c', '\x1f', '﻿', ' ', '᠎', '​']
+NAME_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-'
+
+
+def rand_text(R: random.Random, n=None, allow_quote=True, allow_unicode=True) -> str:
+    n = R.randint(0, 12) if n is None else n
+    pool = 'abcXYZ 0123-_.,:;!?()'
+    if allow_quote:
+        pool += '"\'"'
+    s = []
+    for _ in range(n):
+        x = R.random()
+        if allow_unicode and x < 0.08:
+            s.append(R.choice(['é', 'ß', '中', '文', '😀', 'Ω', '́', 'ｱ']))
+        elif x < 0.1:
+            s.append('\t')
+        else:
+            s.append(R.choice(pool))
+    return ''.join(s)
+
+
+def rand_glyphname(R: random.Random) -> str:
+    x = R.random()
+    if x < 0.4:
+        return ''.join(R.choice(NAME_CHARS) for _ in range(R.randint(1, 10)))
+    if x < 0.55:
+        return 'uni%04X' % R.randint(0, 0xFFFF)
+    if x < 0.65:
+        return R.choice(['space', '.notdef', 'A', 'a', 'quoteright', 'C0001', 'char65'])
+    if x < 0.75:
+        return 'glyph ' + str(R.randint(0, 999))  # spaces in names
+    if x < 0.8:
+        return R.choice(['é', '中文', 'x😀y', 'a"b'])
+    if x < 0.83:
+        return ''
+    return ''.join(R.choice(NAME_CHARS) for _ in range(R.randint(60, 70)))  # long names (post table limit)
+
+
+def rand_bitrow(R, w, density):
+    return ''.join('1' if R.random() < density else '0' for _ in range(w))
+
+
+def gen_glyph(R: random.Random, cp_spec, unicode_font: bool, opts: dict):
+    """cp_spec: int (encoded), or ('unenc', altcode|None), or ('noenc',), or ('neg', n)."""
+    g = {}
+    g['name'] = rand_glyphname(R)
+    if isinstance(cp_spec, int):
+        g['enc'] = str(cp_spec) if R.random() > 0.03 else '+' + str(cp_spec) if R.random() < 0.5 else '0' + str(cp_spec)
+    elif cp_spec[0] == 'unenc':
+        g['enc'] = '-1' if cp_spec[1] is None else f'-1 {cp_spec[1]}'
+    elif cp_spec[0] == 'neg':
+        g['enc'] = str(cp_spec[1])
+    else:
+        g['enc'] = None
+    x = R.random()
+    if x < 0.08:
+        bbw, bbh = 0, 0
+    elif x < 0.12:
+        bbw, bbh = 0, R.randint(1, 4)
+    elif x < 0.16:
+        bbw, bbh = R.randint(1, 6), 0
+    else:
+        bbw = R.choice([R.randint(1, 9), R.randint(1, 17), R.randint(1, 33), 8, 16, 7, 9, 15, 17])
+        bbh = R.randint(1, 20)
+    bbx = R.randint(-6, 6) if R.random() < 0.7 else R.randint(-40, 40)
+    bby = R.randint(-6, 6) if R.random() < 0.7 else R.randint(-40, 40)
+    g['bbx'] = [bbw, bbh, bbx, bby]
+    metrics = []
+    if R.random() < 0.8:
+        metrics.append(['SWIDTH', f'{R.randint(-100, 1200)} {R.choice([0, 0, 0, R.randint(-500, 500)])}'])
+    if R.random() < 0.92:
+        dw = R.randint(0, bbw + 4) if R.random() < 0.97 else R.randint(-3, -1)  # negative advances: TTF error path
+        metrics.append(['DWIDTH', f'{dw} {R.choice([0, 0, 0, R.randint(-20, 20)])}'])
+    if R.random() < 0.15:
+        metrics.append(['SWIDTH1', f'{R.randint(-500, 500)} {R.randint(-1200, 0)}'])
+    if R.random() < 0.15:
+        metrics.append(['DWIDTH1', f'{R.choice([0, 0, R.randint(-5, 5)])} {R.randint(-20, 20)}'])
+    if R.random() < 0.15:
+        a, b = R.randint(-10, 10), R.randint(-10, 20)
+        metrics.append(['VVECTOR', R.choice([f'{a} {b}', f'{a},{b}', f'{a}, {b}', f'{a} ,{b}'])])
+    R.shuffle(metrics)
+    if R.random() < 0.03 and metrics:
+        metrics.append(list(metrics[0]))  # duplicate metric line: first one wins
+    g['metrics'] = metrics
+    # bitmap rows
+    ndigits = -(-bbw // 8) * 2
+    density = R.choice([0, 0.15, 0.4, 0.5, 0.7, 1.0])
+    lower = R.random() < 0.1
+    nrows = bbh
+    y = R.random()
+    if y < 0.06:
+        nrows = max(0, bbh - R.randint(1, 3))  # fewer rows than BBX height
+    elif y < 0.1:
+        nrows = bbh + R.randint(1, 2)  # extra rows (ignored)
+    extra_digits = 2 if R.random() < 0.05 else 0
+    garbage = R.random() < 0.08  # non-zero padding bits
+    rows = []
+    for _ in range(nrows):
+        bits = rand_bitrow(R, bbw, density)
+        nd = ndigits + extra_digits
+        if nd == 0:
+            rows.append('00' if R.random() < 0.5 else '')
+            continue
+        full = bits.ljust(nd * 4, '0')
+        if garbage:
+            full = bits + ''.join(R.choice('01') for _ in range(nd * 4 - len(bits)))
+        s = format(int(full, 2), f'0{nd}X')
+        rows.append(s.lower() if lower else s)
+    rows = [r for r in rows if r != ''] if R.random() < 0.5 else rows
+    g['rows'] = rows
+    g['blank_in_bitmap'] = R.random() < 0.05
+    g['no_endchar'] = R.random() < 0.02
+    if opts.get('malformed') == 'nobbx' and R.random() < 0.3:
+        g['bbx'] = None
+    return g
+
+
+def gen_font_spec(R: random.Random, codes: Codes, force_charset=None):
+    spec: dict = {}
+    spec['noise_seed'] = R.randint(0, 2**31)
+    spec['eol'] = R.choices(['\n', '\r\n', '\r'], [0.7, 0.22, 0.08])[0]
+    spec['indent'] = R.random() < 0.15
+    spec['blank'] = R.random() < 0.2
+    spec['tabs'] = R.random() < 0.15
+    spec['exotic'] = R.random() < 0.02 and tag('exotic')
+    spec['bom'] = R.random() < 0.03
+    spec['version'] = R.choice(['2.1', '2.1', '2.1', '2.2', '2.0', '2', '1.9', '2.10', '3', '+2.1', '2.', '.5', '1e1', '02.1'])
+    if R.random() < 0.01 and tag('lenientint'):
+        spec['version'] = R.choice(['inf', 'Infinity', 'nan', '0x10', '2_1', '-0'])
+    cs = force_charset if force_charset is not None else (
+        FONT_CHARSETS[0] if R.random() < 0.4 else R.choice(FONT_CHARSETS)
+    )
+    reg, enc, key, gl = cs
+    spec['charset'] = [reg, enc, key, gl]
+    tid = table_id(key, gl)
+    unicode_font = key == 'iso10646'
+    ps = R.choice([R.randint(4, 24), 16, 8, 12, R.randint(1, 64)]) if R.random() < 0.98 else 0
+    xres = R.choice([75, 75, 100, 72, 96, 0]) if R.random() < 0.97 else 0
+    yres = R.choice([75, 75, 100, 72, 96, 0])
+    spec['size'] = [ps, xres, yres]
+    spec['fontname'] = R.choice(
+        [
+            f'-Misc-Test-Medium-R-Normal--{ps}-{ps * 10}-{xres}-{yres}-C-80-{reg or "ISO10646"}-{enc or "1"}',
+            'TestFont',
+            'Test Font ' + str(R.randint(0, 99)),
+            rand_text(R, R.randint(0, 20)),
+            '-x-' + rand_text(R, 5, allow_quote=False),
+        ]
+    )
+    malformed = None
+    if R.random() < 0.04:
+        malformed = R.choice(['nobbx', 'badnum', 'truncate_header', 'noendfont', 'badenc', 'unknown_kw'])
+    spec['malformed'] = malformed
+    # glyphs
+    nglyphs = R.choice([0, 1, 2, R.randint(1, 8), R.randint(3, 20), R.randint(10, 40)])
+    if unicode_font:
+        pools = [
+            lambda: R.randint(0x20, 0x7E),
+            lambda: R.randint(0, 0x1F),
+            lambda: R.randint(0xA0, 0x24F),
+            lambda: R.randint(0x370, 0x6FF),
+            lambda: R.randint(0x3000, 0x30FF),
+            lambda: R.randint(0x4E00, 0x9FFF),
+            lambda: R.randint(0xE000, 0xFFFF),
+            lambda: R.randint(0x10000, 0x10FFFF),
+            lambda: R.choice([0xD800, 0xDFFF, 0x110000, 0x7FFFFFFF]),
+        ]
+        weights = [30, 4, 15, 10, 8, 10, 4, 8, 1]
+        ncp = lambda: R.choices(pools, weights)[0]()  # noqa: E731
+    else:
+        valid = codes.cps(tid)
+        ncp = lambda: R.choice(valid) if valid else R.randint(0x20, 0x7E)  # noqa: E731
+    glyphs = []
+    cps_used = []
+    for _ in range(nglyphs):
+        x = R.random()
+        if x < 0.08:
+            cpsp = ('unenc', R.choice([None, None, R.randint(0, 0xFFFF)]))
+        elif x < 0.1:
+            cpsp = ('noenc',)
+        elif x < 0.11:
+            cpsp = ('neg', R.randint(-100, -2))
+        elif x < 0.15 and cps_used:
+            cpsp = R.choice(cps_used)  # duplicate codepoint
+        else:
+            cpsp = ncp()
+            cps_used.append(cpsp)
+        glyphs.append(gen_glyph(R, cpsp, unicode_font, {'malformed': malformed}))
+    spec['glyphs'] = glyphs
+    # font bounding box: union (perturbed) or random
+    boxes = [g['bbx'] for g in glyphs if g['bbx'] and g['bbx'][0] > 0 and g['bbx'][1] > 0]
+    if boxes and R.random() < 0.7:
+        x0 = min(b[2] for b in boxes)
+        y0 = min(b[3] for b in boxes)
+        x1 = max(b[2] + b[0] for b in boxes)
+        y1 = max(b[3] + b[1] for b in boxes)
+        fbb = [x1 - x0, y1 - y0, x0, y0]
+        if R.random() < 0.3:
+            fbb = [fbb[0] + R.randint(-2, 2), fbb[1] + R.randint(-2, 2), fbb[2] + R.randint(-2, 2), fbb[3] + R.randint(-2, 2)]
+    else:
+        fbb = [R.randint(0, 24), R.randint(0, 24), R.randint(-5, 3), R.randint(-6, 2)]
+    if (fbb[0] < 0 or fbb[1] < 0) and not tag('negsize'):
+        fbb[0], fbb[1] = max(fbb[0], 0), max(fbb[1], 0)
+    spec['fbb'] = fbb
+    # header extras (order preserved)
+    hx = []
+    if R.random() < 0.15:
+        hx.append(['METRICSSET', str(R.choice([0, 1, 2]))])
+    if R.random() < 0.1:
+        hx.append(['CONTENTVERSION', str(R.randint(0, 9))])
+    for kw in ('SWIDTH', 'DWIDTH', 'SWIDTH1', 'DWIDTH1', 'VVECTOR'):
+        if R.random() < 0.08:
+            a, b = R.randint(-10, 600), R.randint(-10, 10)
+            hx.append([kw, f'{a},{b}' if kw == 'VVECTOR' and R.random() < 0.5 else f'{a} {b}'])
+    for _ in range(R.choice([0, 0, 1, 2, 4])):
+        hx.insert(R.randint(0, len(hx)), ['COMMENT', rand_comment(R)])
+    if malformed == 'unknown_kw':
+        hx.insert(R.randint(0, len(hx)), ['FOOBAR', '1 2 3'])
+    spec['header_extra'] = hx
+    # properties
+    if R.random() < 0.08:
+        spec['props'] = None
+    else:
+        items = []
+        if reg is not None:
+            q = R.random() < 0.85
+            items.append(['CHARSET_REGISTRY', f'"{reg}"' if q else reg])
+            items.append(['CHARSET_ENCODING', f'"{enc}"' if q or not enc.isdigit() else enc])
+        elif R.random() < 0.2:
+            items.append(['CHARSET_REGISTRY', None])  # key-only
+        for _ in range(R.choice([0, 1, 3, 6, 10, 15])):
+            items.insert(R.randint(0, len(items)), rand_prop(R, ps, glyphs))
+        if R.random() < 0.05 and tag('weirdkey'):
+            items.insert(R.randint(0, len(items)), [R.choice(WEIRD_KEYS), rand_value(R)])
+        for _ in range(R.choice([0, 0, 1, 3])):
+            items.insert(R.randint(0, len(items)), ['#COMMENT', rand_comment(R)])
+        nprops = sum(1 for k, _ in items if k != '#COMMENT')
+        cnt = R.choices([nprops, nprops + R.randint(1, 3), max(0, nprops - 1), None, 'x'], [85, 5, 5, 3, 2])[0]
+        spec['props'] = {'count': cnt, 'items': items}
+    nchars = len(glyphs)
+    spec['chars'] = R.choices([nchars, nchars + 1, max(0, nchars - 1), None], [88, 4, 4, 4])[0]
+    spec['endfont'] = malformed != 'noendfont'
+    if malformed == 'badnum' and glyphs:
+        R.choice(glyphs)['bbx_raw'] = R.choice(['8 x 0 0', '8 8 0', '8 8 0 0.5'] + (['1_0 8 0 0', '٣ 8 0 0'] if tag('lenientint') else []))
+    if malformed == 'badenc' and glyphs:
+        R.choice(glyphs)['enc'] = R.choice(['abc', '', '65.0', '0x41'] + (['1_2', '+1_2'] if tag('lenientint') else []))
+    return spec
+
+
+def rand_comment(R):
+    x = R.random()
+    if x < 0.3:
+        return '"' + rand_text(R, allow_quote=False) + '"'
+    if x < 0.4:
+        return '"' + rand_text(R) + '"'
+    if x < 0.5:
+        return ''
+    if x < 0.55:
+        return '"'
+    if x < 0.6:
+        return "'quoted'"
+    return rand_text(R)
+
+
+def rand_value(R):
+    x = R.random()
+    if x < 0.3:
+        return str(R.randint(-100, 1000))
+    if x < 0.5:
+        return '"' + rand_text(R, allow_quote=False) + '"'
+    if x < 0.6:
+        return '"' + rand_text(R).replace('"', '""') + '"'
+    if x < 0.65:
+        return '"unterminated ' + rand_text(R, 3, allow_quote=False)
+    if x < 0.7:
+        return '"text" trailing junk'
+    if x < 0.75:
+        return R.choice(['+5', '-0', '007', '+0', '-12'])
+    if x < 0.85:
+        return R.choice(['ISO10646', 'foo bar baz', '1.5', '-', '+', '0x10', '12abc', '1e3', "'single'"])
+    if x < 0.88:
+        if tag('bigint'):
+            return R.choice(['99999999999999999999', '-9007199254740993', '18446744073709551616'])
+        return str(R.randint(-10000, 10000))  # (huge FONT_ASCENT values make PCF writers allocate gigabytes)
+    if x < 0.92:
+        return '""'
+    return None
+
+
+def rand_prop(R, ps, glyphs):
+    if R.random() < 0.5:
+        k = R.choice(PROP_POOL_INT)
+        if R.random() < 0.85:
+            if k == 'PIXEL_SIZE':
+                v = str(R.choice([ps, ps, 0, -1, R.randint(1, 300)]))
+            elif k == 'DEFAULT_CHAR':
+                encs = [g['enc'] for g in glyphs if g['enc'] and g['enc'].lstrip('+-').isdigit()]
+                v = R.choice(encs) if encs and R.random() < 0.7 else str(R.randint(-1, 300))
+            else:
+                v = str(R.randint(-5, 40))
+            return [k, v]
+        return [k, rand_value(R)]
+    if R.random() < 0.7:
+        k = R.choice(PROP_POOL_STR)
+        if k == 'WEIGHT_NAME':
+            v = R.choice(['"Bold"', '"Medium"', '"DemiBold"', '"bold extra"', 'Bold', '"Regular"'])
+        elif k == 'SLANT':
+            v = R.choice(['"R"', '"I"', '"O"', '"i"', 'I', '"RI"'])
+        elif k == 'SPACING':
+            v = R.choice(['"M"', '"P"', '"C"', '"m"', 'C'])
+        else:
+            v = rand_value(R)
+        return [k, v]
+    k = ''.join(R.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcxyz') for _ in range(R.randint(1, 12)))
+    return [k, rand_value(R)]
+
+
+# ---------------------------------------------------------------------------
+# rendering a font spec to BDF text
+
+
+def render_bdf(spec: dict) -> str:
+    R = random.Random(spec['noise_seed'])
+    eol = spec['eol']
+    lines: list[str] = []
+    ws = ' \t' if spec['tabs'] else ' '
+
+    def sep():
+        if spec['tabs'] and R.random() < 0.3:
+            return R.choice(['\t', '  ', ' \t '])
+        return ' '
+
+    def emit(key, value=None):
+        s = key if value is None else key + sep() + value
+        if spec['indent'] and R.random() < 0.3:
+            s = R.choice([' ', '  ', '\t']) + s
+        if spec['indent'] and R.random() < 0.1:
+            s = s + R.choice([' ', '\t'])
+        if spec['exotic'] and R.random() < 0.05:
+            s = s + R.choice(EXOTIC_WS) if R.random() < 0.5 else R.choice(EXOTIC_WS) + s
+        lines.append(s)
+        if spec['blank'] and R.random() < 0.08:
+            lines.append(R.choice(['', ' ', '\t']))
+
+    del ws
+    mal = spec.get('malformed')
+    emit('STARTFONT', spec['version'])
+    emit('FONT', spec['fontname'])
+    emit('SIZE', ' '.join(map(str, spec['size'])))
+    emit('FONTBOUNDINGBOX', ' '.join(map(str, spec['fbb'])))
+    for k, v in spec['header_extra']:
+        emit(k, v)
+    if mal == 'truncate_header':
+        return eol.join(lines) + eol
+    props = spec['props']
+    if props is not None:
+        cnt = props['count']
+        emit('STARTPROPERTIES', None if cnt is None else str(cnt))
+        for k, v in props['items']:
+            if k == '#COMMENT':
+                emit('COMMENT', v)
+            else:
+                emit(k, v)
+        emit('ENDPROPERTIES')
+    if spec['chars'] is not None:
+        emit('CHARS', str(spec['chars']))
+    for g in spec['glyphs']:
+        emit('STARTCHAR', g['name'] if g['name'] else None)
+        if g['enc'] is not None:
+            emit('ENCODING', g['enc'] if g['enc'] != '' else None)
+        for k, v in g['metrics']:
+            emit(k, v)
+        if g.get('bbx_raw'):
+            emit('BBX', g['bbx_raw'])
+        elif g['bbx'] is not None:
+            emit('BBX', ' '.join(map(str, g['bbx'])))
+        emit('BITMAP')
+        for i, r in enumerate(g['rows']):
+            if g['blank_in_bitmap'] and i == len(g['rows']) // 2:
+                lines.append('')
+            emit(r) if r else lines.append(r)
+        if not g['no_endchar']:
+            emit('ENDCHAR')
+    if spec['endfont']:
+        emit('ENDFONT')
+    text = eol.join(lines) + eol
+    if spec['bom']:
+        text = '﻿' + text
+    return text
+
+
+# ---------------------------------------------------------------------------
+# random operation scripts
+
+DIRECTIONS = ['lrtb', 'lrbt', 'rltb', 'rlbt', 'tbrl', 'tblr', 'btrl', 'btlr', 'lr', 'rl', 'tb', 'bt', 'xxyy']
+
+
+class State:
+    """Approximate generator-side view of the font, to pick meaningful arguments."""
+
+    def __init__(self, spec, codes: Codes):
+        self.codes = codes
+        reg, enc, key, gl = spec['charset'] if spec else (None, None, 'iso10646', False)
+        if spec and spec.get('props') is None:
+            key, gl = 'iso10646', False  # no properties block: the font is Unicode
+        self.key = key
+        self.gl = gl
+        self.cps: list[int] = []
+        if spec:
+            for g in spec['glyphs']:
+                e = g['enc']
+                if e and e.lstrip('+-').isdigit() and int(e) >= 0:
+                    self.cps.append(int(e))
+        self.nhandles = 0
+        self.has_G = False
+        self.cps2: list[int] = []
+        self.base_key = key
+
+    @property
+    def tid(self):
+        return table_id(self.key, self.gl)
+
+    def valid_cps(self):
+        if self.key in ('iso10646', 'fontspecific'):
+            return None
+        return self.codes.cps(self.tid)
+
+    def char_of(self, cp):
+        if self.key in ('iso10646', 'fontspecific'):
+            return chr(cp) if 0 <= cp <= 0x10FFFF else None
+        return self.codes.char_of(self.tid, cp)
+
+
+def rand_rows(R, w=None, h=None, vals='01'):
+    w = R.randint(0, 9) if w is None else w
+    h = R.randint(0, 9) if h is None else h
+    d = R.random()
+    return [''.join(R.choice(vals) if R.random() < d else '0' for _ in range(w)) for _ in range(h)]
+
+
+def rand_range(R, S: State):
+    x = R.random()
+    cps = S.cps or [65]
+    if x < 0.3:
+        return R.choice(cps) + R.randint(0, 2)
+    if x < 0.65:
+        a = R.choice(cps) - R.randint(0, 3)
+        return [a, a + R.randint(0, 200)]
+    if x < 0.9:
+        out = []
+        for _ in range(R.randint(1, 3)):
+            a = R.choice(cps) - R.randint(0, 3)
+            out.append([a, a + R.randint(0, 50)])
+        return out
+    return [[0, 0]] if R.random() < 0.5 else 0
+
+
+def rand_cp(R, S: State):
+    x = R.random()
+    if S.cps and x < 0.6:
+        return R.choice(S.cps)
+    v = S.valid_cps()
+    if v:
+        return R.choice(v)
+    return R.choice([R.randint(0x20, 0x7E), R.randint(0, 0x2FF), R.randint(0x4E00, 0x4F00), R.randint(0x10000, 0x10100)])
+
+
+def rand_chars(R, S: State, n):
+    out = []
+    bad = S.codes.bad_chars(S.tid) if S.key not in ('iso10646', 'fontspecific') else set()
+    for _ in range(n):
+        x = R.random()
+        ch = None
+        if x < 0.6 and S.cps:
+            ch = S.char_of(R.choice(S.cps))
+        elif x < 0.8:
+            v = S.valid_cps()
+            if v:
+                ch = S.char_of(R.choice(v))
+        if ch is None or len(ch) != 1:
+            ch = chr(R.choice([R.randint(0x20, 0x7E), R.randint(0xA0, 0x17F), R.randint(0x4E00, 0x4E80), 0x1F600, 0x3042]))
+        if ord(ch) in bad:
+            ch = 'A' if ord('A') not in bad else '?'
+        out.append(ch)
+    return out
+
+
+def rand_meta(R, S: State, partial=True):
+    keys = ['glyphname', 'codepoint', 'bbw', 'bbh', 'bbxoff', 'bbyoff', 'swx0', 'swy0', 'dwx0', 'dwy0',
+            'swx1', 'swy1', 'dwx1', 'dwy1', 'vvectorx', 'vvectory', 'hexdata']
+    m = {}
+    bbw, bbh = R.randint(0, 12), R.randint(0, 8)
+    nd = -(-bbw // 8) * 2
+    full = {
+        'glyphname': rand_glyphname(R),
+        'codepoint': rand_cp(R, S) if R.random() < 0.9 else -1,
+        'bbw': bbw,
+        'bbh': bbh,
+        'bbxoff': R.randint(-4, 4),
+        'bbyoff': R.randint(-4, 4),
+        'swx0': R.randint(0, 900),
+        'swy0': 0,
+        'dwx0': R.randint(0, 12),
+        'dwy0': 0,
+        'swx1': None,
+        'swy1': None,
+        'dwx1': None,
+        'dwy1': None,
+        'vvectorx': None,
+        'vvectory': None,
+        'hexdata': [format(R.randint(0, 16**nd - 1), f'0{nd}X') if nd else '' for _ in range(bbh)],
+    }
+    for k in keys:
+        if not partial or k == 'codepoint' or R.random() < 0.7:
+            m[k] = full[k]
+    if R.random() < 0.03:
+        m['bogus'] = 1
+    return m
+
+
+BOPS_MUT = ['crop', 'overlay', 'concat', 'concatall', 'enlarge', 'replace', 'shadow', 'glow', 'bytepad',
+            'setpixel', 'fliph', 'flipv', 'rotate', 'invert', 'shift', 'trim', 'bold', 'italic', 'paste',
+            'clone', 'fromstring', 'blank']
+BOPS_GET = ['todata', 'getpixel', 'bbox', 'width', 'height', 'str', 'equals', 'tosvg', 'contours', 'raster']
+
+
+def rand_bop(R, mut_only=False):
+    m = R.choice(BOPS_MUT if mut_only or R.random() < 0.6 else BOPS_GET)
+    a: list = []
+    bad = R.random() < 0.03  # occasionally out-of-domain arguments (error parity)
+    if m == 'crop':
+        a = [R.randint(0, 14), R.randint(0, 14)] + ([R.randint(-5, 5), R.randint(-5, 5)] if R.random() < 0.8 else [])
+        if bad and tag('negsize'):
+            a[R.randint(0, 1)] = -1
+    elif m == 'overlay':
+        if R.random() < 0.5 or not tag('overlay'):
+            m, a = 'overlay_same', [R.randint(0, 65535)]
+        else:
+            a = [rand_rows(R)]
+    elif m == 'concat':
+        a = [rand_rows(R)] + [R.choice([1, 2, 0, -1]), R.choice([0, 1]), R.randint(-4, 4)][: R.randint(0, 3)]
+    elif m == 'concatall':
+        a = [[rand_rows(R) for _ in range(R.randint(1, 4))], R.choice([1, 2, 0, -1]), R.choice([0, 1])]
+        if R.random() < 0.6:
+            a.append([R.randint(-3, 3) for _ in range(len(a[0]))])
+    elif m == 'enlarge':
+        a = [R.randint(0, 3), R.randint(0, 3)][: R.randint(0, 2)]
+    elif m == 'replace':
+        # multi-character / empty replacements make rows of different lengths
+        # ("ragged" bitmaps), on which later operations are undefined
+        if R.random() < 0.2 and tag('ragged'):
+            a = [R.choice(['01', '10', '0', '1']), R.choice(['', '2', '12'])]
+        else:
+            a = [R.choice(['0', '1', '2', 0, 1, 2]), R.choice(['0', '1', '2', 1, 2])]
+    elif m == 'shadow':
+        a = [R.randint(-3, 3), R.randint(-3, 3)][: R.randint(0, 2)]
+    elif m == 'glow':
+        a = [R.choice([0, 1])][: R.randint(0, 1)]
+    elif m == 'bytepad':
+        a = [R.choice([8, 4, 16, 3, 1])][: R.randint(0, 1)]
+    elif m == 'setpixel':
+        a = [R.randint(0, 3), R.randint(0, 3), R.choice([0, 1, 2])] if R.random() < 0.9 else [R.randint(-1, 9), R.randint(-1, 9), R.choice([0, 1, 2])]
+        if bad:
+            a[2] = 3
+    elif m == 'rotate':
+        a = [R.choice([90, 180, 270, -90, 360, 0, -270, 450] + ([45] if bad else []))][: R.randint(0, 1)]
+    elif m == 'shift':
+        a = [R.randint(-5, 5), R.randint(-5, 5)][: R.randint(0, 2)]
+    elif m == 'bold':
+        a = [R.randint(0, 3) if not bad else -1][: R.randint(0, 1) if not bad else 1]
+    elif m == 'italic':
+        a = [R.randint(1, 4) if not bad else 0, R.randint(-3, 5)][: R.randint(0, 2) if not bad else 2]
+    elif m == 'paste':
+        a = [rand_rows(R), R.randint(-4, 8), R.randint(-4, 8)]
+    elif m == 'fromstring':
+        rows = rand_rows(R, vals='012')
+        t = '\n'.join(r.replace('0', '.').replace('1', '#').replace('2', '&') if R.random() < 0.7 else r for r in rows)
+        if R.random() < 0.2:
+            t = '\n\n' + t.replace('\n', '\r\n') + '\n \n'
+        if bad:
+            t += 'x'
+        a = [t]
+    elif m == 'blank':
+        a = [R.randint(0, 6), R.randint(0, 6)]
+        if bad:
+            a[1] = -2
+    elif m == 'todata':
+        a = [R.choice([0, 1, 2, 3, 4, 5])][: R.randint(0, 1)]
+    elif m == 'getpixel':
+        a = [R.randint(0, 3), R.randint(0, 3)] if R.random() < 0.9 else [R.randint(-1, 9), R.randint(-1, 9)]
+    elif m == 'equals':
+        a = [rand_rows(R)]
+    elif m == 'tosvg':
+        a = [R.choice([1, 2, 1.5, 0.5, 3, 0.1, 10]), R.choice(['path', 'pathOnly', 'rect']), R.choice([False, True]),
+             R.choice([0, 0, 1, -2.5, 0.3]), R.choice([0, 0, 2, -1, 0.7]), R.choice(['square', 'circle'])]
+        a = a[: R.randint(0, 6)]
+    elif m == 'contours':
+        a = [R.choice(['square', 'circle']), R.choice([1, 1, 0.5, 0.7, 0.8, 1.2, 1.5, 0.25] + ([2, 0] if bad else [])),
+             R.choice([1, 2, 4, 10, 64, 7]), R.randint(-3, 3), R.randint(-3, 3)]
+    elif m == 'raster':
+        a = [R.choice(['square', 'circle']), R.choice([1, 0.5, 0.7, 0.8, 1.2, 1.5]), R.choice([2, 4, 10, 64])]
+    return m, a
+
+
+def rand_fn_safe(R):
+    """Bitmap functions suitable for Glyph.transform (return a bitmap, no size-changing errors)."""
+    steps = []
+    for _ in range(R.randint(1, 3)):
+        m = R.choice(['bold', 'italic', 'rotate', 'fliph', 'flipv', 'invert', 'shift', 'trim', 'enlarge',
+                      'shadow', 'glow', 'crop', 'paste', 'bytepad', 'replace'])
+        _, a = rand_bop(R, mut_only=True)
+        if m != _:
+            # regenerate arguments for the chosen method
+            while True:
+                mm, a = rand_bop(R, mut_only=True)
+                if mm == m:
+                    break
+        steps.append([m] + a)
+    return steps
+
+
+def rand_draw_kw(R, with_order=False, S=None):
+    kw = {}
+    if with_order and R.random() < 0.5:
+        kw['order'] = R.choice([1, 0, 2, -1])
+    if with_order and R.random() < 0.3 and S is not None:
+        kw['r'] = rand_range(R, S)
+    if R.random() < 0.5:
+        kw['linelimit'] = R.choice([512, 8, 16, 20, 33, 64, 100000])
+    if R.random() < 0.6:
+        kw['mode'] = R.choice([0, 1])
+    if R.random() < 0.6:
+        kw['direction'] = R.choice(DIRECTIONS)
+    if R.random() < 0.3:
+        kw['ucgs'] = R.choice([False, True])
+    return kw
+
+
+def rand_ttf_kw(R):
+    kw = {}
+    if R.random() < 0.7:
+        kw['shape'] = R.choice(['square', 'circle'])
+    if R.random() < 0.6:
+        kw['dotsize'] = R.choice([1, 1, 0.5, 0.7, 0.8, 0.9, 1.2, 1.5, 0.3] + ([0, 2, -1] if R.random() < 0.05 else []))
+    if R.random() < 0.6:
+        kw['ppu'] = R.choice([2, 4, 8, 10, 16, 32, 64, 64, 128] + ([3, 0, 1] if R.random() < 0.05 else []))
+    if R.random() < 0.4:
+        kw['metadata'] = R.choice([True, False])
+    if R.random() < 0.3:
+        kw['timestamp'] = R.choice([0, 1, 1700000000, -1, 2**31, 4102444800, -2082844800])
+    return kw
+
+
+def rand_pcf_kw(R):
+    kw = {}
+    if R.random() < 0.6:
+        kw['byteorder'] = R.choice(['msb', 'lsb'])
+    if R.random() < 0.6:
+        kw['bitorder'] = R.choice(['msb', 'lsb'])
+    if R.random() < 0.6:
+        kw['glyphpad'] = R.choice([1, 2, 4, 8])
+    if R.random() < 0.6:
+        kw['scanunit'] = R.choice([1, 2, 4])
+    return kw
+
+
+def pcf_sweep():
+    """Every PCF writer option combination (2 x 2 x 4 x 3), plus reading each back."""
+    ops = []
+    for bo in ('msb', 'lsb'):
+        for bi in ('msb', 'lsb'):
+            for gp in (1, 2, 4, 8):
+                for su in (1, 2, 4):
+                    kw = {'byteorder': bo, 'bitorder': bi, 'glyphpad': gp, 'scanunit': su}
+                    ops.append({'op': 'pcfrt', 'kw': kw, 'to': 'P'})
+    return ops
+
+
+def ttf_sweep(R):
+    """TTF writer grid: shape x dotsize x ppu x metadata (+ timestamps), read back."""
+    ops = []
+    for shape in ('square', 'circle'):
+        for dotsize in (1, 0.5, 0.75, 0.9, 1.25, 1.5):
+            for ppu in (2, 10, 64, 128):
+                kw = {'shape': shape, 'dotsize': dotsize, 'ppu': ppu, 'metadata': R.choice([True, False]),
+                      'timestamp': R.choice([0, 1700000000, -1])}
+                op = {'op': 'ttfrt', 'kw': kw, 'to': 'T'}
+                if not kw['metadata']:
+                    op['pixelsize'] = R.choice([8, 16])
+                ops.append(op)
+    return ops
+
+
+def gen_ops(R: random.Random, spec, codes: Codes, has_bdf2: bool, spec2=None):
+    S = State(spec, codes)
+    S.cps2 = State(spec2, codes).cps if spec2 else []
+    ops: list[dict] = []
+    how = R.choices(['string', 'bytes', 'lines'], [70, 20, 10])[0]
+    if how == 'lines' and spec and spec['eol'] == '\r':
+        how = 'string'
+    ops.append({'op': 'load', 'how': how})
+    if has_bdf2:
+        ops.append({'op': 'load', 'src': 'bdf2', 'to': 'G'})
+        S.has_G = True
+    n = R.choice([4, 8, 12, 18, 25, 32])
+    weights = {
+        'tobdf': 10, 'digest': 3, 'svgfont': 4, 'pcf': 6, 'pcfrt': 4, 'ttf': 6, 'ttfrt': 4, 'drawall': 6,
+        'draw': 6, 'drawcps': 3, 'itercps': 2, 'iterglyphs': 1, 'gdraw': 5, 'gorigin': 2, 'gstr': 1,
+        'gchr': 2, 'gbychar': 2, 'lacks': 2, 'c2p': 3, 'p2c': 3, 'setprop': 4, 'delprop': 2, 'getprop': 2,
+        'addglyph': 4, 'removeglyph': 3, 'newglyph': 4, 'gget': 4, 'hsetbitmap': 3, 'hsetmeta': 3,
+        'hshift': 2, 'htransform': 3, 'hclone': 1, 'haddglyph': 2, 'hremove': 1, 'hmeta': 2, 'hdraw': 1,
+        'updatebbox': 3, 'subset': 2, 'merge': 2 if has_bdf2 else 0, 'transform': 4, 'clone': 1,
+        'charsetconvert': 3, 'encoding': 1, 'swidth': 1, 'length': 1, 'bitmap': 8, 'cs': 2, 'csname': 1,
+    }
+    names = list(weights)
+    wts = [weights[k] for k in names]
+    sink = OpSink(R, S, ops)
+    for _ in range(n):
+        k = R.choices(names, wts)[0]
+        if k.startswith('h') and S.nhandles == 0:
+            k = 'gget'
+        sink.add(gen_one(R, k, S, codes))
+    ops.append({'op': 'tobdf'})
+    ops.append({'op': 'digest'})
+    return ops
+
+
+HANDLE_MUT = {'hsetbitmap', 'hsetmeta', 'hshift', 'htransform', 'haddglyph', 'hremove'}
+FONT_MUT = {'addglyph', 'removeglyph', 'transform', 'charsetconvert', 'merge', 'setprop', 'delprop', 'updatebbox'}
+
+
+class OpSink:
+    """Appends generated operations, tracking stale glyph handles: a handle is
+    stale if the font was mutated after the handle was obtained (or last used for
+    a mutation). Mutations through stale handles are tagged 'stalehandle' (or
+    replaced by a fresh `gget` when that tag is avoided)."""
+
+    def __init__(self, R, S, ops):
+        self.R, self.S, self.ops = R, S, ops
+        self.epoch = 0
+        self.hepoch: list[int] = [0] * S.nhandles
+
+    def add(self, op):
+        if op is None:
+            return
+        for o in op if isinstance(op, list) else [op]:
+            name = o['op']
+            if name in HANDLE_MUT and o['h'] < len(self.hepoch) and self.hepoch[o['h']] != self.epoch:
+                if not tag('stalehandle'):
+                    o = {'op': 'gget', 'cp': rand_cp(self.R, self.S)}
+                    self.S.nhandles += 1
+                    name = 'gget'
+            if name in ('gget', 'newglyph', 'hclone'):
+                if name == 'newglyph':
+                    self.epoch += 1
+                self.hepoch.append(self.epoch)
+            elif name in HANDLE_MUT:
+                self.epoch += 1
+                self.hepoch[o['h']] = self.epoch
+            elif name in FONT_MUT and o.get('f', 'F') == 'F':
+                self.epoch += 1
+            self.ops.append(o)
+
+
+def gen_one(R, k, S: State, codes: Codes):  # noqa: C901
+    if k in ('tobdf', 'digest', 'updatebbox', 'length'):
+        return {'op': k}
+    if k == 'svgfont':
+        kw = {}
+        if R.random() < 0.3:
+            kw['xoff'] = R.choice([0, 1, -2, 0.5])
+        if R.random() < 0.3:
+            kw['yoff'] = R.choice([0, 1, -2, 0.25])
+        if R.random() < 0.3:
+            kw['ccns'] = R.choice([True, False])
+        if R.random() < 0.4:
+            kw['uf'] = R.choice(['hexncr', 'decncr', 'char'])
+        return {'op': 'svgfont', 'kw': kw}
+    if k == 'pcf':
+        return {'op': 'pcf', 'kw': rand_pcf_kw(R)}
+    if k == 'pcfrt':
+        return {'op': 'pcfrt', 'kw': rand_pcf_kw(R), 'to': 'P'}
+    if k == 'ttf':
+        return {'op': 'ttf', 'kw': rand_ttf_kw(R)}
+    if k == 'ttfrt':
+        kw = rand_ttf_kw(R)
+        op = {'op': 'ttfrt', 'kw': kw, 'to': 'T'}
+        if kw.get('metadata') is False:
+            op['pixelsize'] = R.choice([8, 12, 16, None])
+        return op
+    if k == 'drawall':
+        return {'op': 'drawall', 'kw': rand_draw_kw(R, True, S)}
+    if k == 'draw':
+        kw = rand_draw_kw(R)
+        if R.random() < 0.15:
+            kw['missing'] = {k2: v for k2, v in rand_meta(R, S, partial=False).items() if k2 != 'bogus'}
+        return {'op': 'draw', 'text': ''.join(rand_chars(R, S, R.randint(0, 8))), 'kw': kw}
+    if k == 'drawcps':
+        cps = [rand_cp(R, S) if R.random() < 0.9 else None for _ in range(R.randint(1, 8))]
+        return {'op': 'drawcps', 'cps': cps, 'kw': rand_draw_kw(R)}
+    if k in ('itercps', 'iterglyphs'):
+        op = {'op': k, 'order': R.choice([1, 0, 2, -1])}
+        if R.random() < 0.5:
+            op['r'] = rand_range(R, S)
+        return op
+    if k == 'gdraw':
+        mode = R.choice([0, 1, 2, -1])
+        op = {'op': 'gdraw', 'cp': rand_cp(R, S), 'mode': mode}
+        if mode == -1:
+            op['bb'] = [R.randint(0, 16), R.randint(0, 16), R.randint(-5, 5), R.randint(-5, 5)]
+        return op
+    if k == 'gorigin':
+        a = [R.choice([0, 1, 2, -1]), R.choice([False, True])]
+        if a[0] == -1:
+            a += [R.randint(-3, 3), R.randint(-3, 3)]
+        return {'op': 'gorigin', 'cp': rand_cp(R, S), 'a': a}
+    if k == 'gstr':
+        return {'op': 'gstr', 'cp': rand_cp(R, S)}
+    if k == 'gchr':
+        return {'op': 'gchr', 'cps': [rand_cp(R, S) for _ in range(R.randint(1, 6))]}
+    if k == 'gbychar':
+        return {'op': 'gbychar', 'chars': rand_chars(R, S, R.randint(1, 5))}
+    if k == 'lacks':
+        return {'op': 'lacks', 'text': ''.join(rand_chars(R, S, R.randint(0, 8)))}
+    if k == 'c2p':
+        return {'op': 'c2p', 'chars': rand_chars(R, S, R.randint(1, 8))}
+    if k == 'p2c':
+        v = S.valid_cps()
+        cps = [rand_cp(R, S) for _ in range(R.randint(1, 8))]
+        if S.key == 'iso10646' and R.random() < 0.2:
+            cps.append(R.choice([-1, 0x110000, 0xD800]))
+        del v
+        return {'op': 'p2c', 'cps': cps}
+    if k == 'setprop':
+        key = R.choice(PROP_POOL_INT + PROP_POOL_STR + ['NewProp', 'newprop', 'X_new'] +
+                       (WEIRD_KEYS if R.random() < 0.05 and tag('weirdkey') else []))
+        if key.upper() in ('CHARSET_REGISTRY', 'CHARSET_ENCODING'):
+            return None
+        val = R.choice([R.randint(-10, 300), rand_text(R), None, '', 'Bold', 'I', 'M'])
+        return {'op': 'setprop', 'key': key, 'value': val}
+    if k == 'delprop':
+        key = R.choice(PROP_POOL_INT + PROP_POOL_STR + ['nonexistent'])
+        return {'op': 'delprop', 'key': key}
+    if k == 'getprop':
+        keys = [R.choice(PROP_POOL_INT + PROP_POOL_STR + ['charset_registry', 'COMMENT', 'missing']) for _ in range(3)]
+        if R.random() < 0.05 and tag('weirdkey'):
+            keys.append(R.choice(WEIRD_KEYS))
+        return {'op': 'getprop', 'keys': keys}
+    if k == 'addglyph':
+        m = rand_meta(R, S)
+        if m.get('codepoint', -1) >= 0:
+            S.cps.append(m['codepoint'])
+        return {'op': 'addglyph', 'meta': m, 'replace': R.choice([True, False])}
+    if k == 'removeglyph':
+        return {'op': 'removeglyph', 'cp': rand_cp(R, S)}
+    if k == 'newglyph':
+        cp = rand_cp(R, S) if R.random() < 0.95 else -1
+        op = {'op': 'newglyph', 'cp': cp, 'rows': rand_rows(R) if R.random() < 0.8 else None,
+              'mode': R.choice([0, 1, 2])}
+        if R.random() < 0.3:
+            op['name'] = rand_glyphname(R)
+        if R.random() < 0.3:
+            op['dwidth'] = R.randint(0, 12)
+        if cp >= 0:
+            S.cps.append(cp)
+        S.nhandles += 1
+        return op
+    if k == 'gget':
+        S.nhandles += 1
+        return {'op': 'gget', 'cp': rand_cp(R, S)}
+    if k.startswith('h'):
+        h = R.randrange(S.nhandles)
+        if k == 'hsetbitmap':
+            mode = R.choice([0, 1, 2, -1])
+            op = {'op': k, 'h': h, 'rows': rand_rows(R), 'mode': mode, 'trim': R.random() < 0.8}
+            if mode == -1:
+                op['bb'] = [R.randint(0, 9), R.randint(0, 9), R.randint(-4, 4), R.randint(-4, 4)]
+            return op
+        if k == 'hsetmeta':
+            m = rand_meta(R, S)
+            if R.random() < 0.6:
+                m = {kk: v for kk, v in m.items() if kk != 'codepoint'} or {'dwx0': 3}
+            elif m.get('codepoint', -1) >= 0:
+                S.cps.append(m['codepoint'])
+            return {'op': k, 'h': h, 'meta': m}
+        if k == 'hshift':
+            return {'op': k, 'h': h, 'dx': R.randint(-3, 3), 'dy': R.randint(-3, 3)}
+        if k == 'htransform':
+            return {'op': k, 'h': h, 'fn': rand_fn_safe(R), 'mode': R.choice([0, 1, 2])}
+        if k == 'hclone':
+            S.nhandles += 1
+            return {'op': k, 'h': h}
+        if k == 'haddglyph':
+            return {'op': k, 'h': h, 'replace': R.choice([True, False])}
+        if k in ('hremove', 'hmeta'):
+            return {'op': k, 'h': h}
+        if k == 'hdraw':
+            return {'op': k, 'h': h, 'mode': R.choice([0, 1, 2])}
+    if k == 'subset':
+        ops = [{'op': 'subset', 'r': rand_range(R, S), 'to': 'S'}]
+        ops.append(R.choice([{'op': 'tobdf', 'f': 'S'}, {'op': 'pcf', 'f': 'S', 'kw': {}}, {'op': 'drawall', 'f': 'S', 'kw': {}}]))
+        return ops
+    if k == 'merge':
+        if S.key not in ('iso10646', 'fontspecific') and any(cp in codes.bad_cps(S.tid) for cp in S.cps2):
+            return None  # the merged codes would be interpreted through a differing codec table
+        S.cps += [c for c in S.cps2 if c not in S.cps]
+        return {'op': 'merge', 'g': 'G', 'replace': R.choice([True, False])}
+    if k == 'transform':
+        op = {'op': 'transform', 'fn': rand_fn_safe(R), 'mode': R.choice([0, 1, 2])}
+        if R.random() < 0.4:
+            op['r'] = rand_range(R, S)
+        return op
+    if k == 'clone':
+        return [{'op': 'clone', 'to': 'C'}, {'op': 'tobdf', 'f': 'C'}]
+    if k == 'charsetconvert':
+        # only targets for which all current glyph characters convert identically in Python and JS
+        cands = CONVERT_TARGETS[:]
+        R.shuffle(cands)
+        for tgt in cands:
+            gl = tgt in GL_CAPABLE or tgt in FORCE_GL
+            tid = table_id(tgt, gl)
+            bad = codes.bad_chars(tid)
+            ok = True
+            if S.key not in ('iso10646', 'fontspecific') and any(cp in codes.bad_cps(S.tid) for cp in S.cps):
+                return None  # a glyph code whose character differs between the two codec tables
+            for cp in S.cps:
+                ch = S.char_of(cp)
+                # astral characters are outside the compared char2cp table (and
+                # GB18030 4-byte codes are not supported by JS without iconv, §4)
+                if ch is not None and len(ch) == 1 and (ord(ch) in bad or (ord(ch) > 0xFFFF and tgt != 'iso10646')):
+                    ok = False
+                    break
+            if not ok:
+                continue
+            newcps = []
+            for cp in S.cps:
+                ch = S.char_of(cp)
+                if ch is not None and len(ch) == 1 and tgt == 'iso10646':
+                    newcps.append(ord(ch))
+            if tgt != 'iso10646':
+                tc = _py_codec(tid)
+                newcps = []
+                for cp in S.cps:
+                    ch = S.char_of(cp)
+                    if ch is not None and len(ch) == 1:
+                        ncp = tc.char2cp(ch)
+                        if ncp is not None:
+                            newcps.append(ncp)
+            S.key, S.gl = tgt, gl
+            S.cps = newcps
+            return {'op': 'charsetconvert', 'charset': R.choice([tgt, tgt.upper()])}
+        return None
+    if k == 'encoding':
+        # charset override (not to GL-capable sets: their GL detection depends on the glyph set)
+        tgt = R.choice([t for t in CONVERT_TARGETS if t not in GL_CAPABLE and t not in FORCE_GL] + ['fontspecific', ''])
+        key = tgt or S.base_key
+        if key in GL_CAPABLE or key in FORCE_GL:
+            return None
+        if key not in ('iso10646', 'fontspecific') and any(cp in codes.bad_cps(table_id(key, False)) for cp in S.cps):
+            return None  # a glyph code whose character differs between the two codec tables
+        S.key, S.gl = key, False
+        return {'op': 'encoding', 'charset': R.choice([tgt, tgt.upper()])}
+    if k == 'swidth':
+        return {'op': 'swidth', 'dwxs': [R.randint(-5, 40) for _ in range(4)]}
+    if k == 'bitmap':
+        x = R.random()
+        if x < 0.4 and S.cps:
+            first = {'op': 'bglyph', 'cp': rand_cp(R, S), 'mode': R.choice([0, 1, 2])}
+        elif x < 0.5:
+            first = {'op': 'bdrawall', 'kw': rand_draw_kw(R, True, S)}
+        else:
+            first = {'op': 'bset', 'rows': rand_rows(R, vals='0112')}
+        ops = [first]
+        for _ in range(R.randint(1, 8)):
+            m, a = rand_bop(R)
+            ops.append({'op': 'bop', 'm': m, 'a': a})
+        return ops
+    if k == 'cs':
+        tgt = R.choice(CONVERT_TARGETS)
+        gl = tgt in GL_CAPABLE or tgt in FORCE_GL
+        tid = table_id(tgt, gl)
+        valid = codes.cps(tid)
+        bad = codes.bad_chars(tid)
+        cps = [R.choice(valid) for _ in range(6)] if valid else [65]
+        chars = [codes.char_of(tid, cp) or 'A' for cp in cps[:3]]
+        chars = [c for c in chars if len(c) == 1 and ord(c) not in bad]
+        name = R.choice([tgt, tgt.upper()])
+        return {'op': 'cs', 'charset': name, 'gl': True if gl else None, 'cps': cps, 'chars': chars}
+    if k == 'csname':
+        regs = ['ISO8859', 'iso8859', 'ISO10646', 'GB2312.1980', 'KOI8', 'MICROSOFT', 'microsoft', 'windows',
+                'JISX0208.1983', 'KSX1001', 'SJIS', 'Big5', '-big5', 'ISO646.1991', 'unicode', 'UTF-8', 'utf_16',
+                'FontSpecific', 'cp1252', 'WINDOWS-1251', '', None, ' iso 8859 ', 'Adobe']
+        encs = ['1', '2', '15', '0', 'R', 'U', 'CP1252', 'cp1250', 'irv', '', None, 'x', '16', '00', '011']
+        pairs = [[R.choice(regs), R.choice(encs)] for _ in range(6)]
+        names = [R.choice(['GB2312', 'Shift-JIS', 'ISO-8859-5', 'ISO10646-1', 'microsoft-cp1252', 'big5-0',
+                           'KOI8-U', 'iso-8859-1', 'ISO8859-15', 'gb18030', 'EUC-JP', 'euc-kr', 'ksc5601.1987-0',
+                           'jisx0201.1976-0', 'fontspecific', 'utf8', 'windows-1253', 'cp932', 'hz-gb-2312',
+                           ' ISO-8859-1 ', 'iso_8859_1', 'Big5-HKSCS', 'BIG5.ETEN-0', 'GB2312.1980-1',
+                           'KSX1001.1998-0', 'ISO646.1991-IRV', 'ascii', 'US-ASCII', 'koi8', 'cp1252',
+                           'win1250', 'ms1251', 'MICROSOFT-CP1255', 'UCS-2', 'UTF-16LE', 'utf_32', 'unicode',
+                           'ISO10646', '-misc', 'adobe-standard', 'sjis-0', 'gbk-0', 'GB18030.2000-0', 'iso2022cn',
+                           ''.join(R.choice('abcISO-_.0189 ') for _ in range(R.randint(0, 10)))])
+                 for _ in range(5)]
+        if R.random() < 0.3 and tag('charsetname'):
+            names[R.randrange(5)] = R.choice(['ISO8859-01', 'KOI8-RU', 'iso8859-09', 'koi8_ru'])
+        return {'op': 'csname', 'pairs': pairs, 'names': names}
+    return None
+
+
+# ---------------------------------------------------------------------------
+# cases
+
+
+def random_case(i: int, seed: int, codes: Codes) -> dict:
+    cseed = seed * 1_000_003 + i
+    R = random.Random(cseed)
+    TAGS.clear()
+    case = _random_case(R, i, seed, cseed, codes)
+    case['tags'] = sorted(TAGS)
+    return case
+
+
+def _random_case(R: random.Random, i: int, seed: int, cseed: int, codes: Codes) -> dict:
+    kind = R.choices(['font', 'create', 'bitmap'], [85, 7, 8])[0]
+    case: dict = {'id': f'r{seed}-{i:05d}', 'kind': kind, 'seed': cseed}
+    if kind == 'bitmap':
+        ops = []
+        for _ in range(R.randint(1, 4)):
+            ops.append({'op': 'bset', 'rows': rand_rows(R, vals='0112')})
+            for _ in range(R.randint(2, 12)):
+                m, a = rand_bop(R)
+                ops.append({'op': 'bop', 'm': m, 'a': a})
+        case.update(font=None, bdf='', ops=ops)
+        return case
+    if kind == 'create':
+        kw = {}
+        for k2, gen in (('pixelsize', lambda: R.choice([R.randint(4, 32), 1, 2, 3, 7, 64, 255])), ('ascent', lambda: R.randint(0, 20)),
+                        ('descent', lambda: R.randint(0, 6)), ('fontname', lambda: rand_text(R)),
+                        ('familyname', lambda: rand_text(R)), ('xres', lambda: R.choice([72, 75, 96])),
+                        ('yres', lambda: R.choice([72, 75, 96]))):
+            if R.random() < 0.4:
+                kw[k2] = gen()
+        S = State(None, codes)
+        ops = [{'op': 'create', 'kw': kw}]
+        sink = OpSink(R, S, ops)
+        for _ in range(R.randint(1, 6)):
+            cp = rand_cp(R, S)
+            S.cps.append(cp)
+            S.nhandles += 1
+            sink.add({'op': 'newglyph', 'cp': cp, 'rows': rand_rows(R), 'mode': R.choice([0, 1, 2]),
+                      **({'dwidth': R.randint(0, 9)} if R.random() < 0.3 else {})})
+        for _ in range(R.randint(2, 10)):
+            k = R.choice(['tobdf', 'pcf', 'ttf', 'ttfrt', 'svgfont', 'drawall', 'updatebbox', 'htransform',
+                          'hsetmeta', 'transform', 'charsetconvert', 'pcfrt', 'draw'])
+            if k.startswith('h') and S.nhandles == 0:
+                continue
+            sink.add(gen_one(R, k, S, codes))
+        ops += [{'op': 'tobdf'}, {'op': 'digest'}]
+        case.update(font=None, bdf='', ops=ops)
+        return case
+    spec = gen_font_spec(R, codes)
+    case['font'] = spec
+    case['bdf'] = render_bdf(spec)
+    if R.random() < 0.15:
+        spec2 = gen_font_spec(R, codes, force_charset=tuple(spec['charset']))
+        spec2['malformed'] = None
+        case['font2'] = spec2
+        case['bdf2'] = render_bdf(spec2)
+    ops = gen_ops(R, spec, codes, 'bdf2' in case, case.get('font2'))
+    if i % 40 == 7:
+        ops[1:1] = pcf_sweep()
+    elif i % 40 == 27:
+        ops[1:1] = ttf_sweep(R)
+    if ops[0].get('how') == 'bytes' and R.random() < 0.15:
+        # invalid UTF-8 bytes inside a comment (decoded with replacement on both sides)
+        raw = case['bdf'].encode('utf-8')
+        junk = bytes(R.choice([0x80, 0xC3, 0xE2, 0xF0, 0xFF, 0xC0, 0xED, 0xA0]) for _ in range(R.randint(1, 4)))
+        idx = raw.find(b'FONT ', raw.find(b'STARTFONT') + 9)
+        if idx >= 0:
+            eol = raw.find(b'\n', idx)
+            eol = eol if eol >= 0 else len(raw)
+            raw = raw[:eol].rstrip(b'\r') + b' ' + junk + raw[eol:] if raw[eol - 1:eol] != b'\r' else raw[: eol - 1] + b' ' + junk + raw[eol - 1:]
+            case['bdf_b64'] = base64.b64encode(raw).decode()
+    case['ops'] = ops
+    return case
+
+
+def rebuild(case: dict) -> dict:
+    """Re-render bdf/bdf2 from the (possibly edited) font specs (used by minimize.py)."""
+    if case.get('font'):
+        case['bdf'] = render_bdf(case['font'])
+        case.pop('bdf_b64', None)
+    if case.get('font2'):
+        case['bdf2'] = render_bdf(case['font2'])
+    return case
+
+
+# ---------------------------------------------------------------------------
+# corpus
+
+
+def corpus_files():
+    dirs = [
+        PYROOT / 'tests' / 'fonts',
+        JSROOT / 'test' / 'fonts',
+        JSROOT / 'test' / 'fixtures',
+    ]
+    seen = {}
+    out = []
+    for d in dirs:
+        for p in sorted(d.rglob('*')):
+            if not p.is_file():
+                continue
+            n = p.name.lower()
+            if not (n.endswith('.bdf') or n.endswith('.pcf') or n.endswith('.pcf.gz') or n.endswith('.ttf')):
+                continue
+            h = hashlib.sha256(p.read_bytes()).hexdigest()
+            if h in seen:
+                continue
+            seen[h] = p
+            out.append(p)
+    return out
+
+
+def corpus_case(p: Path, idx: int) -> dict:
+    n = p.name.lower()
+    size = p.stat().st_size
+    if n.endswith('.gz'):
+        with open(p, 'rb') as f:  # gzip ISIZE trailer: uncompressed size mod 2**32
+            f.seek(-4, 2)
+            size = int.from_bytes(f.read(4), 'little')
+    big = size > 1_500_000
+    ops: list[dict] = []
+    if n.endswith('.ttf'):
+        for ps in (16, 13):
+            ops.append({'op': 'load', 'how': 'bytes', 'src': 'file', 'pixelsize': ps})
+            ops += [{'op': 'digest'}, {'op': 'tobdf'}, {'op': 'drawall', 'kw': {'r': 400}}]
+        ops += [{'op': 'ttf', 'kw': {}}, {'op': 'ttfrt', 'kw': {'shape': 'circle', 'dotsize': 0.7, 'ppu': 10}}, {'op': 'pcf', 'kw': {}}]
+    else:
+        ops.append({'op': 'load', 'how': 'bytes', 'src': 'file'})
+        ops += [{'op': 'digest'}, {'op': 'tobdf'}, {'op': 'pcf', 'kw': {}}]
+        if not big:
+            ops += [
+                {'op': 'pcf', 'kw': {'byteorder': 'lsb', 'bitorder': 'lsb', 'glyphpad': 1}},
+                {'op': 'pcf', 'kw': {'byteorder': 'lsb', 'bitorder': 'msb', 'glyphpad': 8, 'scanunit': 4}},
+                {'op': 'pcfrt', 'kw': {'glyphpad': 2, 'scanunit': 2}, 'to': 'P'},
+            ]
+        ops += [{'op': 'ttf', 'kw': {}}]
+        if not big:
+            ops += [
+                {'op': 'ttf', 'kw': {'shape': 'circle', 'dotsize': 0.7, 'ppu': 10, 'timestamp': 1700000000}},
+                {'op': 'ttf', 'kw': {'shape': 'square', 'dotsize': 0.8, 'ppu': 2, 'metadata': False}},
+                {'op': 'ttfrt', 'kw': {}, 'to': 'T'},
+                {'op': 'ttfrt', 'kw': {'shape': 'circle'}, 'to': 'T'},
+                {'op': 'svgfont', 'kw': {}},
+                {'op': 'svgfont', 'kw': {'uf': 'char', 'ccns': True, 'xoff': 1, 'yoff': -2}},
+            ]
+        ops += [
+            {'op': 'drawall', 'kw': {'r': [[0, 0x2FF], [0x4E00, 0x4E20]] if big else None}},
+            {'op': 'drawall', 'kw': {'r': 600, 'mode': 1, 'direction': 'tbrl', 'linelimit': 64}},
+            {'op': 'draw', 'text': 'Hello, 世界! Ünïcödé 的人光', 'kw': {}},
+            {'op': 'draw', 'text': 'AB 的', 'kw': {'direction': 'rltb', 'mode': 0}},
+            {'op': 'lacks', 'text': 'Aa的人光€'},
+            {'op': 'c2p', 'chars': list('Aa的人光€ß')},
+            {'op': 'p2c', 'cps': [0x41, 0x61, 0x80, 0xA4, 0xB0A1, 0x3021, 0x4E00, 0x7684, 0x8140, 0xA4A1]},
+            {'op': 'itercps', 'order': 0, 'r': 300},
+            {'op': 'length'},
+        ]
+        if not big:
+            ops += [
+                {'op': 'clone', 'to': 'C'},
+                {'op': 'charsetconvert', 'f': 'C', 'charset': 'iso10646'},
+                {'op': 'tobdf', 'f': 'C'},
+                {'op': 'transform', 'fn': [['bold', 1], ['italic', 3, 0]], 'mode': 1},
+                {'op': 'updatebbox'},
+                {'op': 'tobdf'},
+            ]
+    return {'id': f'c{idx:03d}-{p.name}', 'kind': 'corpus', 'file': str(p), 'bdf': '', 'ops': ops}
+
+
+# ---------------------------------------------------------------------------
+
+
+def main(argv):
+    mode = argv[0]
+    if mode == 'tables-spec':
+        Path(argv[1]).write_text(json.dumps(tables_spec()))
+        return
+    if mode == 'corpus':
+        files = corpus_files()
+        with open(argv[1], 'w', encoding='utf-8') as f:
+            for i, p in enumerate(files):
+                f.write(json.dumps(corpus_case(p, i)) + '\n')
+        print(f'[gen] {len(files)} corpus cases', file=sys.stderr)
+        return
+    if mode == 'random':
+        n, seed, outp = int(argv[1]), int(argv[2]), argv[3]
+        agreed = None
+        if '--agreed' in argv:
+            agreed = json.loads(Path(argv[argv.index('--agreed') + 1]).read_text())
+        codes = Codes(agreed)
+        if '--avoid' in argv:
+            av = argv[argv.index('--avoid') + 1].split(',')
+            AVOID.update(ALL_TAGS if 'known' in av or 'all' in av else av)
+        start = int(argv[argv.index('--start') + 1]) if '--start' in argv else 0
+        with open(outp, 'w', encoding='utf-8') as f:
+            for i in range(start, start + n):
+                f.write(json.dumps(random_case(i, seed, codes)) + '\n')
+        print(f'[gen] {n} random cases (seed {seed})', file=sys.stderr)
+        return
+    raise SystemExit(__doc__)
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

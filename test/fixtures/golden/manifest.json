@@ -1,0 +1,947 @@
+[
+ {
+  "file": "spec-square-1-ppu64.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "spec-square-1-ppu10.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "spec-square-0.8-ppu64.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "spec-square-0.8-ppu10.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "spec-circle-1-ppu64.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "spec-circle-1-ppu10.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "spec-circle-0.7-ppu64.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "spec-circle-0.7-ppu10.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "spec-metadataFalse.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "metadata": false
+  }
+ },
+ {
+  "file": "spec-timestamp1700000000-ppu2.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "timestamp": 1700000000,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "spec-shapecircle-dotsize1.5-ppu4.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.5,
+   "ppu": 4
+  }
+ },
+ {
+  "file": "spec-shapesquare-dotsize0.5-ppu2.ttf",
+  "font": "fonts/spec_example_fixed.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.5,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "unifont-square-1-ppu64.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "unifont-square-1-ppu10.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "unifont-square-0.8-ppu64.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "unifont-square-0.8-ppu10.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "unifont-circle-1-ppu64.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "unifont-circle-1-ppu10.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "unifont-circle-0.7-ppu64.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "unifont-circle-0.7-ppu10.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "unifont-metadataFalse.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "metadata": false
+  }
+ },
+ {
+  "file": "unifont-timestamp1700000000-ppu2.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "timestamp": 1700000000,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "unifont-shapecircle-dotsize1.5-ppu4.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.5,
+   "ppu": 4
+  }
+ },
+ {
+  "file": "unifont-shapesquare-dotsize0.5-ppu2.ttf",
+  "font": "fixtures/golden/unifont-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.5,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "hanwang-square-1-ppu64.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "hanwang-square-1-ppu10.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "hanwang-square-0.8-ppu64.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "hanwang-square-0.8-ppu10.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "hanwang-circle-1-ppu64.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "hanwang-circle-1-ppu10.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "hanwang-circle-0.7-ppu64.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "hanwang-circle-0.7-ppu10.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "hanwang-metadataFalse.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "metadata": false
+  }
+ },
+ {
+  "file": "hanwang-timestamp1700000000-ppu2.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "timestamp": 1700000000,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "hanwang-shapecircle-dotsize1.5-ppu4.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.5,
+   "ppu": 4
+  }
+ },
+ {
+  "file": "hanwang-shapesquare-dotsize0.5-ppu2.ttf",
+  "font": "fixtures/golden/hanwang-subset.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.5,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "edge-square-1-ppu64.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "edge-square-1-ppu10.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "edge-square-0.8-ppu64.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "edge-square-0.8-ppu10.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "edge-circle-1-ppu64.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "edge-circle-1-ppu10.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "edge-circle-0.7-ppu64.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "edge-circle-0.7-ppu10.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "edge-metadataFalse.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "metadata": false
+  }
+ },
+ {
+  "file": "edge-timestamp1700000000-ppu2.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "timestamp": 1700000000,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "edge-shapecircle-dotsize1.5-ppu4.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.5,
+   "ppu": 4
+  }
+ },
+ {
+  "file": "edge-shapesquare-dotsize0.5-ppu2.ttf",
+  "font": "fixtures/edge.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.5,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "gb2312-square-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "gb2312-square-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "gb2312-square-0.8-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "gb2312-square-0.8-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "gb2312-circle-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "gb2312-circle-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "gb2312-circle-0.7-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "gb2312-circle-0.7-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "gb2312-metadataFalse.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "metadata": false
+  }
+ },
+ {
+  "file": "gb2312-timestamp1700000000-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "timestamp": 1700000000,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "gb2312-shapecircle-dotsize1.5-ppu4.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.5,
+   "ppu": 4
+  }
+ },
+ {
+  "file": "gb2312-shapesquare-dotsize0.5-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-gb2312.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.5,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "big5-square-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "big5-square-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "big5-square-0.8-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "big5-square-0.8-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "big5-circle-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "big5-circle-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "big5-circle-0.7-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "big5-circle-0.7-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "big5-metadataFalse.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "metadata": false
+  }
+ },
+ {
+  "file": "big5-timestamp1700000000-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "timestamp": 1700000000,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "big5-shapecircle-dotsize1.5-ppu4.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.5,
+   "ppu": 4
+  }
+ },
+ {
+  "file": "big5-shapesquare-dotsize0.5-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-big5.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.5,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "cp1252-square-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "cp1252-square-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "cp1252-square-0.8-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "cp1252-square-0.8-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "cp1252-circle-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "cp1252-circle-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "cp1252-circle-0.7-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "cp1252-circle-0.7-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "cp1252-metadataFalse.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "metadata": false
+  }
+ },
+ {
+  "file": "cp1252-timestamp1700000000-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "timestamp": 1700000000,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "cp1252-shapecircle-dotsize1.5-ppu4.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.5,
+   "ppu": 4
+  }
+ },
+ {
+  "file": "cp1252-shapesquare-dotsize0.5-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-cp1252.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.5,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "shiftjis-square-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "shiftjis-square-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "shiftjis-square-0.8-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "shiftjis-square-0.8-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "shiftjis-circle-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "shiftjis-circle-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "shiftjis-circle-0.7-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "shiftjis-circle-0.7-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "shiftjis-metadataFalse.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "metadata": false
+  }
+ },
+ {
+  "file": "shiftjis-timestamp1700000000-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "timestamp": 1700000000,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "shiftjis-shapecircle-dotsize1.5-ppu4.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.5,
+   "ppu": 4
+  }
+ },
+ {
+  "file": "shiftjis-shapesquare-dotsize0.5-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-shiftjis.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.5,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "euckr-square-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "euckr-square-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "euckr-square-0.8-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "euckr-square-0.8-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.8,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "euckr-circle-1-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "euckr-circle-1-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.0,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "euckr-circle-0.7-ppu64.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 64
+  }
+ },
+ {
+  "file": "euckr-circle-0.7-ppu10.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 0.7,
+   "ppu": 10
+  }
+ },
+ {
+  "file": "euckr-metadataFalse.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "metadata": false
+  }
+ },
+ {
+  "file": "euckr-timestamp1700000000-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "timestamp": 1700000000,
+   "ppu": 2
+  }
+ },
+ {
+  "file": "euckr-shapecircle-dotsize1.5-ppu4.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "circle",
+   "dotsize": 1.5,
+   "ppu": 4
+  }
+ },
+ {
+  "file": "euckr-shapesquare-dotsize0.5-ppu2.ttf",
+  "font": "fonts/unifont-13.0.04-enctest-euckr.bdf",
+  "options": {
+   "shape": "square",
+   "dotsize": 0.5,
+   "ppu": 2
+  }
+ }
+]

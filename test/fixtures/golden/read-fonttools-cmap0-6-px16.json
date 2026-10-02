@@ -1,0 +1,160 @@
+{
+"headers": {
+"bdfversion": 2.1,
+"fontname": "Untitled",
+"pointsize": 16,
+"xres": 75,
+"yres": 75,
+"fbbx": 8,
+"fbby": 11,
+"fbbxoff": 0,
+"fbbyoff": 0,
+"metricsset": 0
+},
+"props": {
+"family_name": "Variant",
+"pixel_size": 16,
+"font_ascent": 14,
+"font_descent": 2,
+"charset_registry": "ISO10646",
+"charset_encoding": "1"
+},
+"propnames": {
+"family_name": "FAMILY_NAME",
+"pixel_size": "PIXEL_SIZE",
+"font_ascent": "FONT_ASCENT",
+"font_descent": "FONT_DESCENT",
+"charset_registry": "CHARSET_REGISTRY",
+"charset_encoding": "CHARSET_ENCODING"
+},
+"glyphs": [
+[
+259,
+[
+"a",
+259,
+3,
+6,
+0,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0"
+]
+]
+],
+[
+256,
+[
+"c",
+256,
+6,
+9,
+0,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC"
+]
+]
+],
+[
+257,
+[
+"d",
+257,
+8,
+11,
+0,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"FF",
+"FF",
+"FF",
+"FF",
+"FF",
+"FF",
+"FF",
+"FF",
+"FF",
+"FF",
+"FF"
+]
+]
+]
+],
+"unencoded": [
+{
+"altcode": null,
+"meta": [
+"b",
+-1,
+5,
+8,
+0,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8"
+]
+]
+}
+]
+}

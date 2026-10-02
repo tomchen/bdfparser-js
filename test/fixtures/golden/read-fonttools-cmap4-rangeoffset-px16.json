@@ -1,0 +1,399 @@
+{
+"headers": {
+"bdfversion": 2.1,
+"fontname": "MacPS",
+"pointsize": 16,
+"xres": 75,
+"yres": 75,
+"fbbx": 10,
+"fbby": 10,
+"fbbxoff": 0,
+"fbbyoff": 0,
+"metricsset": 0
+},
+"props": {
+"family_name": "Plat0 Family",
+"copyright": "Café © Mac",
+"pixel_size": 16,
+"font_ascent": 14,
+"font_descent": 2,
+"charset_registry": "ISO10646",
+"charset_encoding": "1"
+},
+"propnames": {
+"family_name": "FAMILY_NAME",
+"copyright": "COPYRIGHT",
+"pixel_size": "PIXEL_SIZE",
+"font_ascent": "FONT_ASCENT",
+"font_descent": "FONT_DESCENT",
+"charset_registry": "CHARSET_REGISTRY",
+"charset_encoding": "CHARSET_ENCODING"
+},
+"glyphs": [
+[
+66,
+[
+"space",
+66,
+3,
+10,
+3,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0"
+]
+]
+],
+[
+68,
+[
+"exclam",
+68,
+4,
+10,
+0,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0"
+]
+]
+],
+[
+65,
+[
+"quotedbl",
+65,
+4,
+10,
+1,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0",
+"F0"
+]
+]
+],
+[
+9731,
+[
+"dollar",
+9731,
+5,
+10,
+3,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8"
+]
+]
+],
+[
+67,
+[
+"ampersand",
+67,
+6,
+10,
+1,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC"
+]
+]
+],
+[
+69,
+[
+"parenleft",
+69,
+7,
+10,
+3,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE"
+]
+]
+]
+],
+"unencoded": [
+{
+"altcode": null,
+"meta": [
+".null",
+-1,
+2,
+10,
+1,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"C0",
+"C0",
+"C0",
+"C0",
+"C0",
+"C0",
+"C0",
+"C0",
+"C0",
+"C0"
+]
+]
+},
+{
+"altcode": null,
+"meta": [
+"nonmarkingreturn",
+-1,
+3,
+10,
+2,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0",
+"E0"
+]
+]
+},
+{
+"altcode": null,
+"meta": [
+"numbersign",
+-1,
+5,
+10,
+2,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8",
+"F8"
+]
+]
+},
+{
+"altcode": null,
+"meta": [
+"percent",
+-1,
+6,
+10,
+0,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC",
+"FC"
+]
+]
+},
+{
+"altcode": null,
+"meta": [
+"quotesingle",
+-1,
+7,
+10,
+2,
+0,
+480,
+0,
+8,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE",
+"FE"
+]
+]
+}
+]
+}

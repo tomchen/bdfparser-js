@@ -1,0 +1,318 @@
+{
+"headers": {
+"bdfversion": 2.1,
+"fontname": "Untitled",
+"pointsize": 7,
+"xres": 75,
+"yres": 75,
+"fbbx": 10,
+"fbby": 13,
+"fbbxoff": -1,
+"fbbyoff": -2,
+"metricsset": 0
+},
+"props": {
+"family_name": "FT Test",
+"copyright": "none ©",
+"pixel_size": 7,
+"font_ascent": 6,
+"font_descent": 2,
+"charset_registry": "ISO10646",
+"charset_encoding": "1"
+},
+"propnames": {
+"family_name": "FAMILY_NAME",
+"copyright": "COPYRIGHT",
+"pixel_size": "PIXEL_SIZE",
+"font_ascent": "FONT_ASCENT",
+"font_descent": "FONT_DESCENT",
+"charset_registry": "CHARSET_REGISTRY",
+"charset_encoding": "CHARSET_ENCODING"
+},
+"glyphs": [
+[
+32,
+[
+"space",
+32,
+0,
+0,
+0,
+0,
+411,
+0,
+3,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[]
+]
+],
+[
+48,
+[
+"O",
+48,
+5,
+5,
+1,
+1,
+960,
+0,
+7,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"F8",
+"88",
+"88",
+"88",
+"F8"
+]
+]
+],
+[
+65,
+[
+"A",
+65,
+5,
+6,
+0,
+-1,
+960,
+0,
+7,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"20",
+"30",
+"50",
+"78",
+"48",
+"88"
+]
+]
+],
+[
+192,
+[
+"Acomp",
+192,
+7,
+8,
+-1,
+-1,
+960,
+0,
+7,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"08",
+"14",
+"34",
+"7C",
+"EE",
+"EE",
+"CC",
+"78"
+]
+]
+],
+[
+128512,
+[
+"Oscaled",
+128512,
+3,
+3,
+2,
+1,
+960,
+0,
+7,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"E0",
+"A0",
+"E0"
+]
+]
+],
+[
+128513,
+[
+"Oxy",
+128513,
+3,
+7,
+0,
+1,
+960,
+0,
+7,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"60",
+"60",
+"A0",
+"A0",
+"A0",
+"E0",
+"60"
+]
+]
+],
+[
+43,
+[
+"O2x2",
+43,
+4,
+5,
+2,
+1,
+960,
+0,
+7,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"60",
+"B0",
+"90",
+"B0",
+"60"
+]
+]
+],
+[
+77,
+[
+"Match",
+77,
+9,
+11,
+0,
+0,
+960,
+0,
+7,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"0200",
+"0600",
+"0500",
+"0700",
+"0900",
+"0880",
+"E000",
+"E000",
+"E000",
+"E000",
+"E000"
+]
+]
+],
+[
+78,
+[
+"Nested",
+78,
+9,
+9,
+0,
+-2,
+960,
+0,
+7,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[
+"1000",
+"1800",
+"1800",
+"7980",
+"FE80",
+"ED80",
+"CA00",
+"F800",
+"7000"
+]
+]
+]
+],
+"unencoded": [
+{
+"altcode": null,
+"meta": [
+"unmapped",
+-1,
+0,
+0,
+0,
+0,
+960,
+0,
+7,
+0,
+null,
+null,
+null,
+null,
+null,
+null,
+[]
+]
+}
+]
+}

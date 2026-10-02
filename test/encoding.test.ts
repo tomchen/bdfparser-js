@@ -1,7 +1,18 @@
 import { Font } from '../src/index'
 import readlineiter from 'readlineiter'
 import iconv from 'iconv-lite'
-import { char2cp, cp2char, sanitizeCharsetName } from '../src/encoding'
+import {
+  canonicalCharset,
+  char2cp,
+  charsetProps,
+  cp2char,
+  detectGL,
+  getCodec,
+  isUnicodeCharset,
+  sanitizeCharset,
+  sanitizeCharsetName,
+} from '../src/encoding'
+import { setWarningHandler } from '../src/warn'
 
 const aRenGuangBitmap = [
   '0000000000000001000000000000000100000000',
@@ -105,16 +116,18 @@ const examples = {
   },
 }
 
-const cjks = [
-  'utf8',
-  'unicode',
-  'iso10646',
-  'gb2312',
-  'iso2022cn',
-  'big5',
-  'shiftjis',
-  'euckr',
-]
+// font file suffix -> resolved charset (the "iso2022cn" font is a GB2312 font
+// in GL form: v3 reports its charset as 'gb2312')
+const cjks: Record<string, string> = {
+  utf8: 'utf8',
+  unicode: 'unicode',
+  iso10646: 'iso10646',
+  gb2312: 'gb2312',
+  iso2022cn: 'gb2312',
+  big5: 'big5',
+  shiftjis: 'shiftjis',
+  euckr: 'euckr',
+}
 
 describe('Encoding', () => {
   describe('font loading and encoding-related properties', () => {
@@ -130,7 +143,7 @@ describe('Encoding', () => {
       expect(font.charset).toEqual('utf8')
       expect(font.draw('A人光').bindata).toEqual(aRenGuangBitmap)
     })
-    test('without iconv, charset overwritten when loading font', async () => {
+    test('charset forced by .encoding() before loading persists (v3)', async () => {
       const font = new Font()
       await font
         .encoding({ charset: 'gbk' })
@@ -138,7 +151,9 @@ describe('Encoding', () => {
           readlineiter('./test/fonts/unifont-13.0.04-enctest-utf8.bdf')
         )
       expect(font.props.charset_registry).toEqual('UTF-8')
-      expect(font.charset).toEqual('utf8')
+      expect(font.charset).toEqual('gbk')
+      expect(font.draw('A人光').bindata).not.toEqual(aRenGuangBitmap)
+      font.encoding({ charset: 'utf8' })
       expect(font.draw('A人光').bindata).toEqual(aRenGuangBitmap)
     })
     test('charset overwritten by .encoding()', async () => {
@@ -199,8 +214,8 @@ describe('Encoding', () => {
       ).encoding({
         iconv,
         charset: 'gb2312',
-        char2cp: (char) => 0,
-        cp2char: (cp) => '一',
+        char2cp: (_char) => 0,
+        cp2char: (_cp) => '一',
       })
       expect(font.char2cp('人')).toEqual(0)
     })
@@ -213,8 +228,8 @@ describe('Encoding', () => {
       ).encoding({
         iconv,
         charset: 'gb2312',
-        char2cp: (char) => 0,
-        cp2char: (cp) => '一',
+        char2cp: (_char) => 0,
+        cp2char: (_cp) => '一',
       })
       expect(font.cp2char(51403)).toEqual('一')
     })
@@ -233,7 +248,7 @@ describe('Encoding', () => {
         expect(font.cp2char(cp)).toEqual(char)
       })
     }
-    for (const encoding of cjks) {
+    for (const [encoding, charset] of Object.entries(cjks)) {
       test(`"A人光" bitmap in ${encoding} font`, async () => {
         const font = new Font()
         ;(
@@ -241,7 +256,7 @@ describe('Encoding', () => {
             readlineiter(`./test/fonts/unifont-13.0.04-enctest-${encoding}.bdf`)
           )
         ).encoding({ iconv })
-        expect(font.charset).toEqual(encoding)
+        expect(font.charset).toEqual(charset)
         expect(font.draw('A人光').bindata).toEqual(aRenGuangBitmap)
       })
     }
@@ -339,5 +354,209 @@ describe('Encoding', () => {
       expect(sanitizeCharsetName('-_utf32-')).toEqual('_utf32')
       expect(sanitizeCharsetName('GB2312.1980')).toEqual('gb2312')
     })
+  })
+})
+
+describe('v3 charsets', () => {
+  let warnings: string[] = []
+  beforeEach(() => {
+    warnings = []
+    setWarningHandler((m) => warnings.push(m))
+  })
+  afterAll(() => {
+    setWarningHandler(undefined)
+  })
+
+  const fontWith = (registry: string, encoding: string, cps: number[]) =>
+    new Font().load_string(
+      `STARTFONT 2.1
+FONT x
+SIZE 16 75 75
+FONTBOUNDINGBOX 2 2 0 0
+STARTPROPERTIES 2
+CHARSET_REGISTRY "${registry}"
+CHARSET_ENCODING "${encoding}"
+ENDPROPERTIES
+CHARS ${cps.length}
+${cps
+  .map(
+    (cp) =>
+      `STARTCHAR g${cp}\nENCODING ${cp}\nBBX 1 1 0 0\nBITMAP\n80\nENDCHAR\n`
+  )
+  .join('')}ENDFONT
+`
+    )
+
+  test('issue tomchen/bdfparser#4: GB2312.1980-0 font in GL form', () => {
+    const font = fontWith('GB2312.1980', '0', [0x41, 12321])
+    expect(font.charset).toBe('gb2312')
+    expect(font.cp2char(12321)).toBe('啊')
+    expect(font.char2cp('啊')).toBe(0x3021)
+    expect(font.glyph('啊')?.cp()).toBe(12321)
+    expect(font.glyph('啊')?.chr()).toBe('啊')
+    expect(font.lacksglyphs('A啊吖')).toEqual(['吖'])
+    expect(font.draw('A啊').width()).toBe(4)
+    // GL detected from the codepoints even when CHARSET_ENCODING is "1"
+    const f2 = fontWith('GB2312.1980', '1', [0x41, 12321])
+    expect(f2.cp2char(12321)).toBe('啊')
+    // EUC form
+    const f3 = fontWith('GB2312.1980', '1', [0xb0a1])
+    expect(f3.cp2char(0xb0a1)).toBe('啊')
+    expect(f3.char2cp('啊')).toBe(0xb0a1)
+    expect(f3.cp2char(0x3021)).toBeNull()
+  })
+
+  test('JIS X 0208, KS C 5601 (GL), JIS X 0201', () => {
+    const jis = fontWith('JISX0208.1983', '0', [0x2422])
+    expect(jis.cp2char(0x2422)).toBe('あ')
+    expect(jis.char2cp('あ')).toBe(0x2422)
+    expect(jis.char2cp('A')).toBe(0x41)
+    expect(jis.char2cp('丂')).toBeNull()
+    const ks = fontWith('KSC5601.1987', '0', [0x3021])
+    expect(ks.charset).toBe('ksc5601')
+    expect(ks.cp2char(0x3021)).toBe('가')
+    const kx = fontWith('KSX1001', '0', [0x3021])
+    expect(kx.charset).toBe('ksc5601')
+    const k = fontWith('JISX0201.1976', '0', [0x41, 0xb1])
+    expect(k.cp2char(0xb1)).toBe('ｱ')
+    expect(k.cp2char(0x41)).toBe('A')
+    expect(k.cp2char(0x90)).toBeNull()
+    expect(k.char2cp('ｱ')).toBe(0xb1)
+    expect(k.char2cp('A')).toBe(0x41)
+    expect(k.char2cp('あ')).toBeNull()
+  })
+
+  test('single-byte charsets', () => {
+    const l1 = fontWith('ISO8859', '1', [0xe9])
+    expect(l1.charset).toBe('iso88591')
+    expect(l1.cp2char(0x80)).toBe('\x80') // identity, not windows-1252
+    expect(l1.cp2char(0x06fe)).toBeNull()
+    expect(l1.char2cp('€')).toBeNull()
+    expect(fontWith('ISO8859', '0', []).charset).toBe('iso88591')
+    expect(fontWith('ISO8859', '5', []).cp2char(0xcf)).toBe('Я')
+    expect(fontWith('KOI8', 'R', []).cp2char(0xf1)).toBe('Я')
+    expect(fontWith('KOI8', 'U', []).charset).toBe('koi8u')
+    expect(fontWith('microsoft', 'cp1252', []).cp2char(0x80)).toBe('€')
+    expect(fontWith('microsoft', 'symbol', []).charset).toBe('microsoft')
+    expect(fontWith('windows-1251', '0', []).charset).toBe('cp1251')
+    const a = fontWith('ISO646.1991', 'IRV', [])
+    expect(a.charset).toBe('iso646')
+    expect(a.cp2char(0x41)).toBe('A')
+    expect(a.cp2char(0x80)).toBeNull()
+    expect(a.char2cp('é')).toBeNull()
+    expect(a.char2cp('A')).toBe(0x41)
+    const cp = fontWith('CP1252', '0', [])
+    expect(cp.cp2char(0x06fe)).toBeNull()
+    expect(cp.char2cp('€')).toBe(0x80)
+    expect(cp.char2cp('中')).toBeNull()
+  })
+
+  test('unknown charset: Unicode identity, warned once per font', () => {
+    const f = fontWith('FontSpecific', '0', [0x41])
+    expect(f.charset).toBe('fontspecific')
+    expect(f.cp2char(0x41)).toBe('A')
+    expect(f.char2cp('A')).toBe(0x41)
+    f.glyph('A')
+    expect(warnings).toEqual([
+      "Unknown charset 'fontspecific', characters are mapped to codepoints as Unicode",
+    ])
+    expect(f.newglyph(0x42).meta.glyphname).toBe('char66')
+  })
+
+  test('Unicode font: astral characters, invalid input', () => {
+    const f = fontWith('ISO10646', '1', [0x1f600])
+    expect(f.glyph('😀')?.cp()).toBe(0x1f600)
+    expect(f.lacksglyphs('😀😁')).toEqual(['😁'])
+    expect(f.cp2char(0x110000)).toBeNull()
+    expect(f.cp2char(-1)).toBeNull()
+    expect(f.cp2char(1.5)).toBeNull()
+    expect(() => f.char2cp('ab')).toThrow(TypeError)
+    expect(() => f.char2cp('')).toThrow(TypeError)
+    expect(f.draw('😀').width()).toBe(2)
+  })
+
+  test('encoding(): charset override, clearing, setter, custom functions', () => {
+    const f = fontWith('ISO10646', '1', [0x41])
+    f.encoding({ charset: 'Big5-0' })
+    expect(f.charset).toBe('big5')
+    f.encoding({ charset: '' })
+    expect(f.charset).toBe('iso10646')
+    f.charset = 'microsoft-cp1252'
+    expect(f.charset).toBe('cp1252')
+    f.encoding({ charset: null })
+    f.encoding({ char2cp: () => undefined, cp2char: () => undefined })
+    expect(f.char2cp('A')).toBeNull()
+    expect(f.cp2char(65)).toBeNull()
+    expect(f.glyph('A')).toBeNull()
+    expect(f.draw('A').width()).toBe(2) // drawn as missing glyph
+  })
+
+  test('canonical names, props, codecs', () => {
+    expect(sanitizeCharset()).toBe('iso10646')
+    expect(sanitizeCharset('ISO8859', 2)).toBe('iso88592')
+    expect(sanitizeCharset('ISO8859', 'x')).toBe('iso88591')
+    expect(sanitizeCharset('SJIS')).toBe('shiftjis')
+    expect(sanitizeCharset('win1250')).toBe('cp1250')
+    expect(sanitizeCharset('1252')).toBe('1252')
+    expect(canonicalCharset('ISO10646-1')).toBe('iso10646')
+    expect(canonicalCharset('big5-0')).toBe('big5')
+    expect(canonicalCharset('microsoft-cp1252')).toBe('cp1252')
+    expect(canonicalCharset('ISO-8859-5')).toBe('iso88595')
+    expect(canonicalCharset('nonsense-1')).toBe('nonsense1')
+    expect(canonicalCharset('nonsense')).toBe('nonsense')
+    expect(charsetProps('utf8')).toEqual(['ISO10646', '1'])
+    expect(charsetProps('iso88592')).toEqual(['ISO8859', '2'])
+    expect(charsetProps('cp1250')).toEqual(['MICROSOFT', 'CP1250'])
+    expect(charsetProps('gb2312')).toEqual(['GB2312.1980', '0'])
+    expect(charsetProps('big5')).toEqual(['BIG5', '0'])
+    expect(isUnicodeCharset('utf16le')).toBe(true)
+    expect(isUnicodeCharset('big5')).toBe(false)
+    expect(getCodec('nonsense').known).toBe(false)
+    expect(getCodec('gb2312').gl94).toBe(true)
+    expect(getCodec('gb2312').gl).toBe(false)
+    expect(getCodec('iso2022cn').gl).toBe(true)
+    expect(getCodec('utf-16le').unicode).toBe(true)
+    expect(getCodec('latin2').cp2char(0xe8)).toBe('č')
+    expect(getCodec('iso88593').cp2char(0xa1)).toBe('Ħ')
+    expect(detectGL('0', [])).toBe(true)
+    expect(detectGL(0, [])).toBe(true)
+    expect(detectGL(null, [0x41, 0xb0a1, 0x3021])).toBe(true)
+    expect(detectGL(undefined, [0x41, 0xb0a1])).toBe(false)
+    expect(detectGL('1', [0x41])).toBe(false)
+    // one unit decoding to two code points (WHATWG); Node's ICU maps it to a PUA char
+    expect(['Ê̄', '\uf325']).toContain(cp2char(0x8862, 'big5hkscs'))
+    expect(cp2char(0x4141, 'gbk')).toBeNull()
+    expect(cp2char(0x81, 'gbk')).toBeNull()
+    expect(cp2char(0x41, 'gbk')).toBe('A')
+    expect(char2cp('𠀀', 'gb18030')).toBeNull()
+    expect(char2cp('𠀀', 'gb18030', iconv)).toBe(0x95328236)
+    expect(cp2char(0x95328236, 'gb18030', iconv)).toBe('𠀀')
+    expect(cp2char(0x4141, 'gbk', iconv)).toBeNull()
+    expect(cp2char(0x81, 'gbk', iconv)).toBeNull()
+    expect(char2cp('中', 'cp1252', iconv)).toBeNull()
+    expect(char2cp('?', 'cp1252', iconv)).toBe(0x3f)
+    expect(char2cp('a', 'cp437', iconv)).toBe(0x61) // only iconv knows cp437
+    expect(char2cp('a', 'cp437')).toBe(0x61) // unknown: Unicode identity
+    const throwing = {
+      encode: () => {
+        throw new Error('x')
+      },
+      decode: () => {
+        throw new Error('x')
+      },
+      encodingExists: () => {
+        throw new Error('x')
+      },
+    }
+    expect(char2cp('a', 'cp1252', throwing)).toBe(0x61) // falls back to TextDecoder
+    const noExists = { encode: throwing.encode, decode: throwing.decode }
+    expect(char2cp('a', 'cp1252', noExists)).toBeNull()
+    expect(cp2char(0x61, 'cp1252', noExists)).toBeNull()
+    const longEnc = {
+      encode: () => new Uint8Array(5),
+      decode: () => '',
+    }
+    expect(char2cp('a', 'cp1252', longEnc)).toBeNull()
+    expect(cp2char(0x61, 'cp1252', longEnc)).toBeNull()
   })
 })

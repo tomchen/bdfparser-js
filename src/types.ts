@@ -1,16 +1,5 @@
 import { DIRE_MAP, DIRE_SHORTCUT_MAP } from './constants'
 
-export const setProperty = <
-  O extends Record<PropertyKey, unknown>,
-  K extends keyof O
->(
-  obj: O,
-  key: K,
-  value: O[K]
-): void => {
-  obj[key] = value
-}
-
 export type BdfHeaders = {
   bdfversion: number
   fontname: string
@@ -37,9 +26,15 @@ export type BdfHeaders = {
 }
 export type BdfHeadersTemp = Partial<BdfHeaders>
 
-export type Props = Record<string, string | number | null> & {
+/** A property value: `number` (unquoted integer), `string` (quoted or raw token) or `null` (key-only line) */
+export type PropValue = string | number | null
+
+export type Props = Record<string, PropValue> & {
   comment?: string[]
 }
+
+/** An unencoded glyph (`ENCODING -1 [altcode]`) */
+export type UnencodedGlyph = { altcode: number | null; meta: GlyphMetaInFont }
 
 export type GlyphMetaInFont = [
   string, // glyphname
@@ -58,7 +53,7 @@ export type GlyphMetaInFont = [
   number | null, // dwy1
   number | null, // vvectorx
   number | null, // vvectory
-  string[] // hexdata
+  string[], // hexdata
 ]
 
 export type GlyphMetaInFontTemp = [
@@ -78,7 +73,7 @@ export type GlyphMetaInFontTemp = [
   number | null,
   number | null,
   number | null,
-  string[] | null
+  string[] | null,
 ]
 
 export type GlyphMeta = {
@@ -105,19 +100,20 @@ export type GlyphMetaTemp = Partial<GlyphMeta>
 export type TodataFuncRetType<T> = T extends undefined
   ? string[]
   : T extends 0
-  ? string
-  : T extends 1
-  ? string[]
-  : T extends 2
-  ? number[][]
-  : T extends 3
-  ? number[]
-  : T extends 4
-  ? string[]
-  : T extends 5
-  ? number[]
-  : never
+    ? string
+    : T extends 1
+      ? string[]
+      : T extends 2
+        ? number[][]
+        : T extends 3
+          ? number[]
+          : T extends 4
+            ? string[]
+            : T extends 5
+              ? number[]
+              : never
 
+/** Codepoint range filter: `n` (cp < n), `[a, b]` (a ≤ cp ≤ b) or a list of `[a, b]` */
 export type CodepointRangeType = number | [number, number] | [number, number][]
 export type OrderType = -1 | 0 | 1 | 2
 export type GlyphDrawModeType = -1 | 0 | 1 | 2

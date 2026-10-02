@@ -17,8 +17,8 @@ describe('Shortcuts', () => {
   test('$Font with encoding options works', async () => {
     const encodingOptions = {
       charset: 'utf8',
-      char2cp: (char: string) => 0,
-      cp2char: (cp: number) => 'a',
+      char2cp: (_char: string) => 0,
+      cp2char: (_cp: number) => 'a',
     }
     const font = await $Font(readlineiter(unifont_path), encodingOptions)
     expect(font.charset).toBe('utf8')

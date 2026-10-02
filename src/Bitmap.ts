@@ -1,10 +1,72 @@
+import { bitmapContours } from './outline'
 import { DirectionNumberType, TodataFuncRetType } from './types'
+import { warn } from './warn'
 
+/**
+ * Minimal subset of `CanvasRenderingContext2D` used by `draw2canvas` (works
+ * with HTML canvas, `OffscreenCanvas`, node-canvas, skia-canvas, ...)
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type CanvasContext = { fillStyle: any; fillRect: any } // Can't use CanvasRenderingContext2D in Deno for now
+export type CanvasContext = { fillStyle: any; fillRect: any }
+
+/** Colors for the pixel values `'0'`, `'1'` and `'2'` (`null` = not drawn) */
+export type PixelColors = Partial<Record<'0' | '1' | '2', string | null>>
+
+/** Options of {@link Bitmap.draw2canvas} */
+export type Draw2CanvasOptions = {
+  /** x (canvas units) of the bitmap's top-left corner, default `0` */
+  x?: number
+  /** y (canvas units) of the bitmap's top-left corner, default `0` */
+  y?: number
+  /** size (canvas units) of one pixel, default `1` */
+  pixelsize?: number
+  /** colors, default `{'0': null, '1': 'black', '2': 'red'}` */
+  pixelcolors?: PixelColors | null
+}
+
+/** SVG output format of {@link Bitmap.tosvg} */
+export type SvgFormat = 'path' | 'pathOnly' | 'rect'
+
+/** Pixel (dot) shape */
+export type SvgShape = 'square' | 'circle'
+
+const DEFAULT_PIXELCOLORS: PixelColors = { '0': null, '1': 'black', '2': 'red' }
+
+const FROMSTRING_MAP: Record<string, string> = {
+  '#': '1',
+  '.': '0',
+  '&': '2',
+  '0': '0',
+  '1': '1',
+  '2': '2',
+}
+
+/**
+ * Format a number for text output (SPEC-v3): the integer string if `n` is
+ * integral, otherwise the shortest round-trip representation.
+ *
+ * @param n - Number
+ *
+ * @returns Formatted number
+ */
+export const fmtnum = (n: number): string => String(n)
+
+const ORed = (a: string, b: string | undefined): string =>
+  b !== undefined && b !== '0' ? b : a
 
 /**
  * `Bitmap` object
+ *
+ * `bindata` is an `array` of equal-length `string`s of `'0'`, `'1'` (and
+ * `'2'`), row 0 at the top.
+ *
+ * Two coordinate conventions are used:
+ *
+ * - pixel addressing (`getpixel`, `setpixel`, `paste`): `(x, y)` with the
+ *   origin at the top-left, y grows downward (`bindata[y][x]`, the canvas /
+ *   image convention);
+ * - movement / cropping (`crop`, `shadow`, `shift`, `bbox`): x grows right, y
+ *   grows upward, offsets are measured from the bottom-left (font convention).
  *
  * @see online docs: {@link https://font.tomchen.org/bdfparser_js/bitmap}
  */
@@ -20,6 +82,63 @@ export class Bitmap {
    */
   constructor(bin_bitmap_list: string[]) {
     this.bindata = bin_bitmap_list
+  }
+
+  /**
+   * Create a `Bitmap` from its `toString()` representation (`#` = 1, `.` = 0,
+   * `&` = 2; the digits `0`, `1`, `2` are also accepted). Rows are separated by
+   * newlines (`\r` is ignored); blank lines at the start and the end are
+   * ignored.
+   *
+   * @param text - Text representation
+   *
+   * @returns New `Bitmap` object
+   *
+   * @throws Error on an invalid character or rows of different lengths
+   *
+   * @example
+   * Bitmap.fromstring('.#.\n###\n.#.')
+   */
+  static fromstring(text: string): Bitmap {
+    const lines = text.replace(/\r/g, '').split('\n')
+    while (lines.length > 0 && lines[0].trim() === '') {
+      lines.shift()
+    }
+    while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+      lines.pop()
+    }
+    const rows = lines.map((line, i) => {
+      let row = ''
+      for (const c of line) {
+        const v = FROMSTRING_MAP[c]
+        if (v === undefined) {
+          throw new Error(
+            `Invalid character ${JSON.stringify(c)} in bitmap row ${i}`
+          )
+        }
+        row += v
+      }
+      return row
+    })
+    if (rows.some((r) => r.length !== rows[0].length)) {
+      throw new Error('Bitmap rows have different lengths')
+    }
+    return new Bitmap(rows)
+  }
+
+  /**
+   * Create an empty (all `'0'`) bitmap.
+   *
+   * @param w - Width
+   * @param h - Height
+   *
+   * @returns New `Bitmap` object
+   */
+  static blank(w: number, h: number): Bitmap {
+    if (w < 0 || h < 0) {
+      throw new RangeError('Bitmap size must not be negative')
+    }
+    return new Bitmap(Array.from({ length: h }, () => '0'.repeat(w)))
   }
 
   /**
@@ -49,14 +168,27 @@ export class Bitmap {
   }
 
   /**
-   * Get the width of the bitmap.
+   * Whether two bitmaps have the same `bindata`.
+   *
+   * @param other - Other bitmap
+   *
+   * @returns `true` if equal
+   */
+  equals(other: Bitmap): boolean {
+    const a = this.bindata
+    const b = other.bindata
+    return a.length === b.length && a.every((row, i) => row === b[i])
+  }
+
+  /**
+   * Get the width of the bitmap (`0` for an empty bitmap).
    *
    * @returns Width of the bitmap
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/bitmap#width}
    */
   width(): number {
-    return this.bindata[0].length
+    return this.bindata.length > 0 ? this.bindata[0].length : 0
   }
 
   /**
@@ -121,10 +253,11 @@ export class Bitmap {
       finalstart - s2start,
       finalend - finalstart
     )
-    return news1
-      .split('')
-      .map((val, i) => (parseInt(news2[i], 10) || parseInt(val, 10)).toString())
-      .join('')
+    let ret = ''
+    for (let i = 0; i < news1.length; i++) {
+      ret += ORed(news1[i], news2[i])
+    }
+    return ret
   }
 
   private static __listofstr_offset_concat(
@@ -137,7 +270,7 @@ export class Bitmap {
     if (_offset === 0) {
       return list1.concat(list2)
     }
-    const width = list1[0].length
+    const width = list1.length > 0 ? list1[0].length : (list2[0]?.length ?? 0)
     const len1 = list1.length
     const len2 = list2.length
     const s2start = len1 + _offset
@@ -156,14 +289,11 @@ export class Bitmap {
       } else {
         s2 = list2[i - s2start]
       }
-      retlist.push(
-        s1
-          .split('')
-          .map((val, i) =>
-            (parseInt(s2[i], 10) || parseInt(val, 10)).toString()
-          )
-          .join('')
-      )
+      let row = ''
+      for (let j = 0; j < s1.length; j++) {
+        row += ORed(s1[j], s2[j])
+      }
+      retlist.push(row)
     }
     return retlist
   }
@@ -194,8 +324,8 @@ export class Bitmap {
    *
    * @param w - Width
    * @param h - Height
-   * @param xoff - X offset
-   * @param yoff - Y offset
+   * @param xoff - X offset (from the left)
+   * @param yoff - Y offset (from the bottom, y up)
    *
    * @returns The `Bitmap` object itself, which now has only the specified area as its `.bindata`
    *
@@ -221,18 +351,18 @@ export class Bitmap {
     const bindata_a = this.bindata
     const bindata_b = bitmap.bindata
     if (bindata_a.length !== bindata_b.length) {
-      console.warn('the bitmaps to overlay have different height')
+      warn('the bitmaps to overlay have different height')
     }
-    if (bindata_a[0].length !== bindata_b[0].length) {
-      console.warn('the bitmaps to overlay have different width')
+    if (this.width() !== bitmap.width()) {
+      warn('the bitmaps to overlay have different width')
     }
-    this.bindata = bindata_a.map((val, li) => {
-      const la = val
-      const lb = bindata_b[li]
-      return la
-        .split('')
-        .map((val, i) => (parseInt(lb[i], 10) || parseInt(val, 10)).toString())
-        .join('')
+    this.bindata = bindata_a.map((la, li) => {
+      const lb = bindata_b[li] ?? ''
+      let row = ''
+      for (let i = 0; i < la.length; i++) {
+        row += ORed(la[i], lb[i])
+      }
+      return row
     })
     return this
   }
@@ -260,6 +390,9 @@ export class Bitmap {
     const _direction = options.direction ?? 1
     const _align = options.align ?? 1
     const _offsetlist = options.offsetlist ?? null
+    if (bitmaplist.length === 0) {
+      return new Bitmap([])
+    }
     let bd, ireal, maxsize, offset, ret: string[], w, xoff
     if (_direction > 0) {
       maxsize = Math.max(...bitmaplist.map((val) => val.height()))
@@ -390,16 +523,12 @@ export class Bitmap {
       ret = ret.map((v) =>
         v
           .split('')
-          .reduce((acc: string[], cur: string): string[] => {
-            return acc.concat(Array(_x).fill(cur))
-          }, [])
+          .map((c) => c.repeat(_x))
           .join('')
       )
     }
     if (_y > 1) {
-      ret = ret.reduce((acc: string[], cur: string): string[] => {
-        return acc.concat(Array(_y).fill(cur))
-      }, [])
+      ret = ret.flatMap((row) => Array<string>(_y).fill(row))
     }
     return ret
   }
@@ -430,29 +559,10 @@ export class Bitmap {
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/bitmap#replace}
    */
   replace(substr: string | number, newsubstr: string | number): this {
-    const _substr = typeof substr === 'number' ? substr.toString() : substr
-    const _newsubstr =
-      typeof newsubstr === 'number' ? newsubstr.toString() : newsubstr
-
-    const replaceAll = (
-      str: string,
-      substr: string,
-      newsubstr: string
-    ): string => {
-      if ('replaceAll' in String.prototype) {
-        return (
-          str as string & {
-            replaceAll: (...args: string[]) => string
-          }
-        ).replaceAll(substr, newsubstr)
-      } else {
-        const escapeRegExp = (s: string): string =>
-          s.replace(/[.*+\-?^${}()|[\]\\]/g, '\\$&')
-        return str.replace(new RegExp(escapeRegExp(substr), 'g'), newsubstr)
-      }
-    }
+    const _substr = String(substr)
+    const _newsubstr = String(newsubstr)
     this.bindata = this.bindata.map((val) =>
-      replaceAll(val, _substr, _newsubstr)
+      val.split(_substr).join(_newsubstr)
     )
     return this
   }
@@ -472,12 +582,10 @@ export class Bitmap {
   shadow(xoff?: number | null, yoff?: number | null): this {
     const _xoff = xoff ?? 1
     const _yoff = yoff ?? -1
-    let h, resized_xoff, resized_yoff, shadow_xoff, shadow_yoff, w
+    let resized_xoff, resized_yoff, shadow_xoff, shadow_yoff
     const bitmap_shadow = this.clone()
-    w = this.width()
-    h = this.height()
-    w += Math.abs(_xoff)
-    h += Math.abs(_yoff)
+    const w = this.width() + Math.abs(_xoff)
+    const h = this.height() + Math.abs(_yoff)
     bitmap_shadow.bindata = bitmap_shadow.bindata.map((val) =>
       val.replace(/1/g, '2')
     )
@@ -515,20 +623,14 @@ export class Bitmap {
    */
   glow(mode?: 0 | 1 | null): this {
     const _mode = mode ?? 0
-    let line, pixel, w, h
-    w = this.width()
-    h = this.height()
-    w += 2
-    h += 2
-    this.crop(w, h, -1, -1)
+    this.crop(this.width() + 2, this.height() + 2, -1, -1)
     const b = this.todata(2)
     const bl = b.length
     for (let i_line = 0; i_line < bl; i_line++) {
-      line = b[i_line]
+      const line = b[i_line]
       const ll = line.length
       for (let i_pixel = 0; i_pixel < ll; i_pixel++) {
-        pixel = line[i_pixel]
-        if (pixel === 1) {
+        if (line[i_pixel] === 1) {
           b[i_line][i_pixel - 1] ||= 2
           b[i_line][i_pixel + 1] ||= 2
           b[i_line - 1][i_pixel] ||= 2
@@ -542,7 +644,7 @@ export class Bitmap {
         }
       }
     }
-    this.bindata = b.map((l) => l.map((val) => val.toString()).join(''))
+    this.bindata = b.map((l) => l.join(''))
     return this
   }
 
@@ -582,6 +684,11 @@ export class Bitmap {
   ): TodataFuncRetType<T> {
     const _datatype = datatype ?? 1
     let ret: unknown
+    const checkBinary = (s: string): void => {
+      if (!/^[01]*$/.test(s)) {
+        throw new Error(`Invalid binary string: ${s}`)
+      }
+    }
     switch (_datatype) {
       case 0:
         ret = this.bindata.join('\n')
@@ -595,188 +702,510 @@ export class Bitmap {
       case 3:
         ret = ([] as number[]).concat(...this.todata(2))
         break
-      case 4:
+      case 4: {
         // if there are '2's, it will throw error
+        const ndigits = Math.ceil(this.width() / 4)
         ret = this.bindata.map((s) => {
-          if (!/^[01]+$/.test(s)) {
-            throw new Error(`Invalid binary string: ${s}`)
-          }
-          return parseInt(s, 2)
-            .toString(16)
-            .padStart(Math.floor((-1 * this.width()) / 4) * -1, '0')
+          checkBinary(s)
+          return s === ''
+            ? ''
+            : BigInt('0b' + s)
+                .toString(16)
+                .padStart(ndigits, '0')
         })
         break
+      }
       case 5:
         // if there are '2's, it will throw error
         ret = this.bindata.map((s) => {
-          if (!/^[01]+$/.test(s)) {
-            throw new Error(`Invalid binary string: ${s}`)
-          }
-          return parseInt(s, 2)
+          checkBinary(s)
+          return s === '' ? 0 : parseInt(s, 2)
         })
         break
     }
     return ret as TodataFuncRetType<T>
   }
 
+  private __checkxy(x: number, y: number): void {
+    if (
+      !Number.isInteger(x) ||
+      !Number.isInteger(y) ||
+      y < 0 ||
+      y >= this.height() ||
+      x < 0 ||
+      x >= this.width()
+    ) {
+      throw new RangeError(
+        `Pixel (${x}, ${y}) is out of range of the ${this.width()}x${this.height()} bitmap`
+      )
+    }
+  }
+
   /**
-   * Draw the bitmap to HTML canvas
+   * Get the value (0, 1 or 2) of the pixel at `(x, y)` (top-left origin, y down).
    *
-   * @param context - Canvas 2D context (`canvas.getContext("2d")`)
-   * @param pixelcolors - Object mapping `'0'`/`'1'`/`'2'` in the bitmap data to color
-   * @param xoff - X position of top left corner of bitmap, default is 0
-   * @param yoff - Y position of top left corner of bitmap, default is 0
-   * @param
+   * @param x - Column (0 = left)
+   * @param y - Row (0 = top)
+   *
+   * @returns Pixel value
+   *
+   * @throws RangeError if out of range
+   */
+  getpixel(x: number, y: number): number {
+    this.__checkxy(x, y)
+    return parseInt(this.bindata[y][x], 10)
+  }
+
+  /**
+   * Set the pixel at `(x, y)` (top-left origin, y down).
+   *
+   * @param x - Column (0 = left)
+   * @param y - Row (0 = top)
+   * @param value - 0, 1 (default) or 2
    *
    * @returns The `Bitmap` object itself
    *
-   * @see online docs: {@link https://font.tomchen.org/bdfparser_js/bitmap#draw2canvas}
+   * @throws RangeError if out of range or `value` is not 0, 1 or 2
    */
-  draw2canvas(
-    context: CanvasContext,
-    pixelcolors?: Record<'0' | '1' | '2', string | null> | null,
-    xoff = 0,
-    yoff = 0
-  ): this {
-    const _pixelcolors = pixelcolors ?? {
-      '0': null,
-      '1': 'black',
-      '2': 'red',
+  setpixel(x: number, y: number, value: 0 | 1 | 2 = 1): this {
+    if (value !== 0 && value !== 1 && value !== 2) {
+      throw new RangeError(
+        `Pixel value must be 0, 1 or 2, not ${String(value)}`
+      )
     }
-    const _x = xoff ?? 0
-    const _y = yoff ?? 0
-    this.todata(2).forEach((line, y) => {
-      line.forEach((pixel, x) => {
-        const s = pixel.toString()
-        if (s === '0' || s === '1' || s === '2') {
-          const color = _pixelcolors[s]
-          if (color !== null && color !== undefined) {
-            context.fillStyle = color
-            context.fillRect(_x + x, _y + y, 1, 1)
+    this.__checkxy(x, y)
+    const row = this.bindata[y]
+    this.bindata = [...this.bindata]
+    this.bindata[y] = row.slice(0, x) + String(value) + row.slice(x + 1)
+    return this
+  }
+
+  /**
+   * Mirror the bitmap left ↔ right.
+   *
+   * @returns The `Bitmap` object itself
+   */
+  fliph(): this {
+    this.bindata = this.bindata.map((row) => row.split('').reverse().join(''))
+    return this
+  }
+
+  /**
+   * Mirror the bitmap top ↔ bottom.
+   *
+   * @returns The `Bitmap` object itself
+   */
+  flipv(): this {
+    this.bindata = [...this.bindata].reverse()
+    return this
+  }
+
+  /**
+   * Rotate the bitmap clockwise.
+   *
+   * @param angle - Angle in degrees, a multiple of 90 (negative = counter-clockwise), default 90
+   *
+   * @returns The `Bitmap` object itself
+   *
+   * @throws Error if `angle` is not a multiple of 90
+   */
+  rotate(angle = 90): this {
+    if (!Number.isInteger(angle) || angle % 90 !== 0) {
+      throw new Error(
+        `Rotation angle must be a multiple of 90, not ${String(angle)}`
+      )
+    }
+    const turns = (((angle / 90) % 4) + 4) % 4
+    for (let t = 0; t < turns; t++) {
+      const src = this.bindata
+      const h = src.length
+      const w = this.width()
+      const out: string[] = []
+      for (let c = 0; c < w; c++) {
+        let row = ''
+        for (let r = h - 1; r >= 0; r--) {
+          row += src[r][c]
+        }
+        out.push(row)
+      }
+      this.bindata = out
+    }
+    return this
+  }
+
+  /**
+   * Invert the bitmap: `'0'` becomes `'1'`, every other pixel becomes `'0'`.
+   *
+   * @returns The `Bitmap` object itself
+   */
+  invert(): this {
+    this.bindata = this.bindata.map((row) =>
+      row.replace(/./g, (p) => (p === '0' ? '1' : '0'))
+    )
+    return this
+  }
+
+  /**
+   * Move the content by `dx` pixels to the right and `dy` pixels up, keeping
+   * the size; vacated pixels become `'0'`.
+   *
+   * @param dx - Pixels to the right
+   * @param dy - Pixels up
+   *
+   * @returns The `Bitmap` object itself
+   */
+  shift(dx = 0, dy = 0): this {
+    return this.crop(this.width(), this.height(), -dx, -dy)
+  }
+
+  /**
+   * Ink bounding box `[w, h, xoff, yoff]` in `crop()` convention (offsets from
+   * the bottom-left), so `bitmap.crop(...bitmap.bbox())` trims the bitmap.
+   * `[0, 0, 0, 0]` if there is no ink.
+   *
+   * @returns Bounding box
+   */
+  bbox(): [number, number, number, number] {
+    const rows: number[] = []
+    this.bindata.forEach((row, i) => {
+      if (/[^0]/.test(row)) {
+        rows.push(i)
+      }
+    })
+    if (rows.length === 0) {
+      return [0, 0, 0, 0]
+    }
+    let left = Infinity
+    let right = -Infinity
+    for (const i of rows) {
+      const row = this.bindata[i]
+      left = Math.min(left, row.search(/[^0]/))
+      right = Math.max(right, row.replace(/0+$/, '').length)
+    }
+    const top = rows[0]
+    const bottom = rows[rows.length - 1]
+    return [right - left, bottom - top + 1, left, this.height() - 1 - bottom]
+  }
+
+  /**
+   * Remove empty rows and columns on all four sides (`crop(...bbox())`). A
+   * bitmap without ink becomes empty (`bindata` is `[]`).
+   *
+   * @returns The `Bitmap` object itself
+   */
+  trim(): this {
+    const bb = this.bbox()
+    if (bb[0] === 0) {
+      this.bindata = []
+      return this
+    }
+    return this.crop(...bb)
+  }
+
+  /**
+   * Embolden: the width grows by `n` and the result is the overlay of the
+   * bitmap shifted right by 0 … `n` pixels.
+   *
+   * @param n - Pixels, default 1
+   *
+   * @returns The `Bitmap` object itself
+   */
+  bold(n = 1): this {
+    if (n < 0) {
+      throw new RangeError('n must not be negative')
+    }
+    this.bindata = this.bindata.map((row) => {
+      const cur = (row + '0'.repeat(n)).split('')
+      for (let k = 1; k <= n; k++) {
+        for (let x = k; x < cur.length; x++) {
+          const b = x - k < row.length ? row[x - k] : '0'
+          if (b !== '0') {
+            cur[x] = b
           }
         }
-      })
+      }
+      return cur.join('')
     })
     return this
   }
 
   /**
-   * Convert bitmap to SVG string
+   * Slant the bitmap: the row at index `r` counted from the bottom (0 = bottom
+   * row) is shifted right by `floor((r - base) / step)` pixels; the bitmap is
+   * widened as needed.
    *
-   * Converts bitmap to an SVG string without smoothing the path, vectorizing it while maintaining a pixelated effect
+   * @param step - Rows per one pixel of shift (positive), default 2
+   * @param base - Row (from the bottom) that is not shifted, default 0
    *
-   * @param pixelSize - Nominal pixel size in the SVG, default to 1
-   * @param format - Format of the SVG string, could be:
-   * - 'rect' (SVG is made of `<rect>` elements),
-   * - 'path' (SVG is made of a single `<path>` element),
-   * - 'pathOnly' (only return the path data)
-   * @param inverted - Invert the SVG (upside down) (needed in SVG font), default to false
-   * @param offsets - Offsets (to the right (x) top (y)) to apply to SVG paths, default to `{ x: 0, y: 0 }`
-   *
-   * @returns SVG string (or path data, depending on `format`)
+   * @returns The `Bitmap` object itself
    */
-  tosvg = (
-    pixelSize = 1,
-    format: 'rect' | 'path' | 'pathOnly' = 'path',
-    inverted = false,
-    offsets: { x?: number; y?: number } = { x: 0, y: 0 }
-  ): string => {
-    const bitmap = this.bindata
-    if (!bitmap || bitmap.length === 0 || bitmap[0].length === 0) {
-      return ''
+  italic(step = 2, base = 0): this {
+    if (!(step > 0)) {
+      throw new RangeError('step must be a positive integer')
     }
-
-    const xOffset = offsets.x ?? 0
-    const yOffset = offsets.y ?? 0
-
-    const height = bitmap.length
-    const width = bitmap[0].length
-    const rects = []
-
-    const visited = Array(height)
-      .fill(null)
-      .map(() => Array(width).fill(false))
-
-    const colorMap: { [key: string]: string } = {
-      '1': '#000000',
-      '0': '#FFFFFF',
+    const h = this.height()
+    if (h === 0) {
+      return this
     }
+    const w = this.width()
+    const shifts = Array.from({ length: h }, (_, r) =>
+      Math.floor((r - base) / step)
+    )
+    const lo = Math.min(...shifts)
+    const hi = Math.max(...shifts)
+    const nw = w + hi - lo
+    this.bindata = this.bindata.map((row, i) => {
+      const s = shifts[h - 1 - i] - lo
+      return '0'.repeat(s) + row + '0'.repeat(nw - s - w)
+    })
+    return this
+  }
 
-    const svgWidth = width * pixelSize
-    const svgHeight = height * pixelSize
+  /**
+   * Draw `bitmap` over this one with its top-left corner at `(x, y)` (top-left
+   * origin, y down). Pixels outside are clipped; non-`'0'` source pixels win.
+   * The size is unchanged.
+   *
+   * @param bitmap - Bitmap to paste
+   * @param x - Column of its top-left corner
+   * @param y - Row of its top-left corner
+   *
+   * @returns The `Bitmap` object itself
+   */
+  paste(bitmap: Bitmap, x = 0, y = 0): this {
+    const w = this.width()
+    const out = [...this.bindata]
+    bitmap.bindata.forEach((srow, j) => {
+      const ty = y + j
+      if (ty < 0 || ty >= out.length) {
+        return
+      }
+      const row = out[ty].split('')
+      for (let i = 0; i < srow.length; i++) {
+        const tx = x + i
+        if (tx >= 0 && tx < w && srow[i] !== '0') {
+          row[tx] = srow[i]
+        }
+      }
+      out[ty] = row.join('')
+    })
+    this.bindata = out
+    return this
+  }
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        if (!visited[y][x]) {
-          const currentColor = colorMap[bitmap[y][x]]
-
-          let maxWidth = 1
-          while (
-            x + maxWidth < width &&
-            bitmap[y][x + maxWidth] === bitmap[y][x] &&
-            !visited[y][x + maxWidth]
-          ) {
-            maxWidth++
-          }
-
-          let maxHeight = 1
-          outer: while (y + maxHeight < height) {
-            for (let dx = 0; dx < maxWidth; dx++) {
-              if (
-                bitmap[y + maxHeight][x + dx] !== bitmap[y][x] ||
-                visited[y + maxHeight][x + dx]
-              ) {
-                break outer
-              }
+  /**
+   * Draw the bitmap to an HTML canvas (or any object with `fillStyle` and
+   * `fillRect`), one `fillRect(x + col * pixelsize, y + row * pixelsize,
+   * pixelsize, pixelsize)` per non-transparent pixel.
+   *
+   * @param context - Canvas 2D context (`canvas.getContext('2d')`)
+   * @param options.x - x of the bitmap's top-left corner, default 0
+   * @param options.y - y of the bitmap's top-left corner, default 0
+   * @param options.pixelsize - size of one pixel, default 1
+   * @param options.pixelcolors - `{'0': color | null, '1': ..., '2': ...}`, default `{'0': null, '1': 'black', '2': 'red'}`
+   *
+   * Backward compatible with the v2 signature
+   * `draw2canvas(context, pixelcolors?, xoff?, yoff?)`: if the 2nd argument
+   * has any of the keys `'0'`, `'1'`, `'2'`, it is treated as `pixelcolors`.
+   *
+   * @returns The `Bitmap` object itself
+   *
+   * @example
+   * bitmap.draw2canvas(ctx, { x: 10, y: 20, pixelsize: 4, pixelcolors: { '1': '#f00' } })
+   *
+   * @see online docs: {@link https://font.tomchen.org/bdfparser_js/bitmap#draw2canvas}
+   */
+  draw2canvas(
+    context: CanvasContext,
+    options?: Draw2CanvasOptions | PixelColors | null,
+    xoff?: number,
+    yoff?: number
+  ): this {
+    let opts: Draw2CanvasOptions
+    if (
+      options !== null &&
+      options !== undefined &&
+      ('0' in options || '1' in options || '2' in options)
+    ) {
+      opts = { pixelcolors: options as PixelColors, x: xoff, y: yoff }
+    } else {
+      opts = (options as Draw2CanvasOptions | null | undefined) ?? {
+        x: xoff,
+        y: yoff,
+      }
+    }
+    const colors = opts.pixelcolors ?? DEFAULT_PIXELCOLORS
+    const x0 = opts.x ?? 0
+    const y0 = opts.y ?? 0
+    const ps = opts.pixelsize ?? 1
+    let current: unknown = undefined
+    this.bindata.forEach((line, row) => {
+      for (let col = 0; col < line.length; col++) {
+        const s = line[col]
+        if (s === '0' || s === '1' || s === '2') {
+          const color = colors[s]
+          if (color !== null && color !== undefined) {
+            if (color !== current) {
+              context.fillStyle = color
+              current = color
             }
-            maxHeight++
-          }
-
-          for (let dy = 0; dy < maxHeight; dy++) {
-            for (let dx = 0; dx < maxWidth; dx++) {
-              visited[y + dy][x + dx] = true
-            }
-          }
-
-          if (currentColor !== '#FFFFFF') {
-            rects.push({
-              x: x * pixelSize + xOffset,
-              y:
-                (inverted
-                  ? svgHeight - y * pixelSize - maxHeight * pixelSize
-                  : y * pixelSize) + yOffset,
-              width: maxWidth * pixelSize,
-              height: maxHeight * pixelSize,
-              color: currentColor,
-            })
+            context.fillRect(x0 + col * ps, y0 + row * ps, ps, ps)
           }
         }
       }
-    }
+    })
+    return this
+  }
 
-    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}">`
+  /**
+   * Convert the bitmap to SVG.
+   *
+   * - `'path'`: a complete `<svg>` with one `<path>` (all square pixels merged
+   *   into one outline, holes included);
+   * - `'pathOnly'`: only the path data (`d` attribute);
+   * - `'rect'`: a complete `<svg>` with one `<rect>` per greedy rectangle
+   *   (square only).
+   *
+   * @param pixelsize - Nominal pixel size in the SVG, default 1
+   * @param format - `'path'` (default), `'pathOnly'` or `'rect'`
+   * @param inverted - y-up coordinates (for SVG fonts), default `false`
+   * @param offsets - Offsets `{x, y}` added to every coordinate, default `{x: 0, y: 0}`
+   * @param shape - `'square'` (default) or `'circle'` (round dots)
+   *
+   * @returns SVG string (or path data, depending on `format`)
+   */
+  tosvg(
+    pixelsize = 1,
+    format: SvgFormat = 'path',
+    inverted = false,
+    offsets: { x?: number; y?: number } = {},
+    shape: SvgShape = 'square'
+  ): string {
+    if (format !== 'path' && format !== 'pathOnly' && format !== 'rect') {
+      throw new Error(`Unknown SVG format ${JSON.stringify(format)}`)
+    }
+    if (shape !== 'square' && shape !== 'circle') {
+      throw new Error(`Unknown shape ${JSON.stringify(shape)}`)
+    }
+    const xoff = offsets.x ?? 0
+    const yoff = offsets.y ?? 0
+    const bindata = this.bindata
+    const h = this.height()
+    const w = this.width()
+    const head = `<svg xmlns="http://www.w3.org/2000/svg" width="${fmtnum(
+      w * pixelsize
+    )}" height="${fmtnum(h * pixelsize)}">`
 
     if (format === 'rect') {
-      svg += rects
-        .map((rect) => {
-          return `<rect x="${rect.x}" y="${rect.y}" width="${rect.width}" height="${rect.height}" fill="${rect.color}" />`
-        })
-        .join('')
-    } else {
-      const path = rects
-        .map((rect) => {
-          return `M${rect.x},${rect.y} L${rect.x + rect.width},${rect.y} L${
-            rect.x + rect.width
-          },${rect.y + rect.height} L${rect.x},${rect.y + rect.height} Z`
-        })
-        .join(' ')
-      if (format === 'pathOnly') {
-        return path
-      } else {
-        svg += `<path d="${path}" fill="${colorMap[1]}" />`
+      if (shape !== 'square') {
+        throw new Error("format 'rect' only supports shape 'square'")
+      }
+      return head + this.__svgrects(pixelsize, inverted, xoff, yoff) + '</svg>'
+    }
+
+    const parts: string[] = []
+    if (shape === 'circle') {
+      const r = pixelsize / 2
+      const arc = `a${fmtnum(r)} ${fmtnum(r)} 0 1 0 `
+      for (let rb = 0; rb < h; rb++) {
+        const row = bindata[h - 1 - rb]
+        for (let c = 0; c < w; c++) {
+          if (row[c] === '0') {
+            continue
+          }
+          const cx = (c + 0.5) * pixelsize + xoff
+          const cy = (inverted ? rb + 0.5 : h - rb - 0.5) * pixelsize + yoff
+          parts.push(
+            `M${fmtnum(cx - r)} ${fmtnum(cy)}${arc}${fmtnum(
+              2 * r
+            )} 0${arc}${fmtnum(-2 * r)} 0Z`
+          )
+        }
+      }
+    } else if (h > 0 && w > 0) {
+      for (const contour of bitmapContours(bindata, {
+        shape: 'square',
+        dotsize: 1,
+        ppu: 1,
+      })) {
+        const pts = contour.map(([x, y]) => [
+          x * pixelsize + xoff,
+          (inverted ? y : h - y) * pixelsize + yoff,
+        ])
+        let seg = `M${fmtnum(pts[0][0])} ${fmtnum(pts[0][1])}`
+        let prevY = pts[0][1]
+        for (let i = 1; i < pts.length; i++) {
+          const [px, py] = pts[i]
+          seg += py === prevY ? `H${fmtnum(px)}` : `V${fmtnum(py)}`
+          prevY = py
+        }
+        parts.push(seg + 'Z')
       }
     }
-    svg += `</svg>`
-    return svg
+    const d = parts.join('')
+    if (format === 'pathOnly') {
+      return d
+    }
+    if (d === '') {
+      return head + '</svg>'
+    }
+    return `${head}<path d="${d}" fill="#000000" /></svg>`
+  }
+
+  private __svgrects(
+    pixelsize: number,
+    inverted: boolean,
+    xoff: number,
+    yoff: number
+  ): string {
+    const bitmap = this.bindata
+    const height = this.height()
+    const width = this.width()
+    const visited = Array.from({ length: height }, () =>
+      Array<boolean>(width).fill(false)
+    )
+    const svgHeight = height * pixelsize
+    let out = ''
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (visited[y][x]) {
+          continue
+        }
+        const v = bitmap[y][x]
+        let mw = 1
+        while (
+          x + mw < width &&
+          bitmap[y][x + mw] === v &&
+          !visited[y][x + mw]
+        ) {
+          mw++
+        }
+        let mh = 1
+        outer: while (y + mh < height) {
+          for (let dx = 0; dx < mw; dx++) {
+            if (bitmap[y + mh][x + dx] !== v || visited[y + mh][x + dx]) {
+              break outer
+            }
+          }
+          mh++
+        }
+        for (let dy = 0; dy < mh; dy++) {
+          for (let dx = 0; dx < mw; dx++) {
+            visited[y + dy][x + dx] = true
+          }
+        }
+        if (v !== '0') {
+          const rx = x * pixelsize + xoff
+          const ry =
+            (inverted
+              ? svgHeight - y * pixelsize - mh * pixelsize
+              : y * pixelsize) + yoff
+          out += `<rect x="${fmtnum(rx)}" y="${fmtnum(ry)}" width="${fmtnum(
+            mw * pixelsize
+          )}" height="${fmtnum(mh * pixelsize)}" fill="#000000" />`
+        }
+      }
+    }
+    return out
   }
 }

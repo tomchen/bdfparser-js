@@ -9,13 +9,12 @@ import {
 import iconv from 'iconv-lite'
 
 describe('Glyph', () => {
-  let font
-  let glyph_a
+  let font: Font
+  let glyph_a: Glyph
 
   beforeEach(async () => {
     font = new Font()
-    await font.encoding({ iconv })
-      .load_filelines(readlineiter(unifont_path))
+    await font.encoding({ iconv }).load_filelines(readlineiter(unifont_path))
 
     glyph_a = new Glyph(glyph_a_meta, font)
     return
@@ -172,15 +171,14 @@ describe('Glyph', () => {
 })
 
 describe('Glyph draw spec quoteright', () => {
-  let font
-  let glyph_qr
+  let font: Font
+  let glyph_qr: Glyph
 
   beforeEach(async () => {
     font = new Font()
-    await font.encoding({ iconv })
-      .load_filelines(readlineiter(specfont_path))
+    await font.encoding({ iconv }).load_filelines(readlineiter(specfont_path))
 
-    glyph_qr = font.glyph("'")
+    glyph_qr = font.glyph("'") as Glyph
     return
   })
 
@@ -272,15 +270,14 @@ describe('Glyph draw spec quoteright', () => {
 })
 
 describe('Glyph draw spec j', () => {
-  let font
-  let glyph_j
+  let font: Font
+  let glyph_j: Glyph
 
   beforeEach(async () => {
     font = new Font()
-    await font.encoding({ iconv })
-      .load_filelines(readlineiter(specfont_path))
+    await font.encoding({ iconv }).load_filelines(readlineiter(specfont_path))
 
-    glyph_j = font.glyph('j')
+    glyph_j = font.glyph('j') as Glyph
     return
   })
 

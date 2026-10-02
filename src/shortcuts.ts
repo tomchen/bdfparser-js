@@ -1,31 +1,62 @@
 import { Bitmap } from './Bitmap'
-import { Font } from './Font'
+import { EncodingOptions, Font, LoadOptions } from './Font'
 import { Glyph } from './Glyph'
 import { GlyphMeta } from './types'
-import iconvlite from 'iconv-lite'
+
+/** Font sources accepted by {@link $Font} */
+export type FontSource =
+  | AsyncIterable<string>
+  | Iterable<string>
+  | string
+  | Uint8Array
+  | ArrayBuffer
+  | ArrayBufferView
+  | URL
+
+const isBinary = (
+  s: unknown
+): s is Uint8Array | ArrayBuffer | ArrayBufferView =>
+  ArrayBuffer.isView(s) ||
+  Object.prototype.toString.call(s) === '[object ArrayBuffer]'
+
+const isURL = (s: unknown): s is URL =>
+  typeof URL !== 'undefined' &&
+  (s instanceof URL || Object.prototype.toString.call(s) === '[object URL]')
 
 /**
- * Shortcut for `new Font().load_filelines(filelines).encoding(encodingOptions)`
+ * Create and load a font in one call, then apply encoding options.
  *
- * @param filelines - Asynchronous iterator containing each line in string text from the font file
- * @param encodingOptions - Encoding options
- * @param encodingOptions.iconv - iconv-lite instance
- * @param encodingOptions.charset - force a charset name
- * @param encodingOptions.char2cp - use a customized character to codepoint method
- * @param encodingOptions.cp2char - use a customized codepoint to character method
+ * `source` can be:
+ * - an (async) iterable of lines, e.g. `readlineiter(path)` (Node) or `fetchline(url)` (browser) → BDF;
+ * - a `string` → BDF text;
+ * - a `Uint8Array` / `ArrayBuffer` → BDF, PCF, gzip-compressed PCF/BDF or TrueType (auto-detected);
+ * - a `URL` → fetched with `fetch` (any of the formats above).
  *
- * @returns The newly instantiated `Font` object that's loaded the font file and encoding options
+ * @param source - Font source
+ * @param encodingOptions - Encoding options (see `Font.encoding`)
+ * @param loadOptions - Load options (`pixelsize` for TrueType fonts without `BDFP` table)
+ *
+ * @returns Promise of the newly instantiated, loaded `Font` object
+ *
+ * @example
+ * const font = await $Font(new URL('./fonts/unifont.bdf', location.href))
  */
 export const $Font = async (
-  filelines: AsyncIterableIterator<string>,
-  encodingOptions: {
-    iconv?: typeof iconvlite
-    charset?: string
-    char2cp?: (char: string) => number
-    cp2char?: (cp: number) => string
-  }
+  source: FontSource,
+  encodingOptions: EncodingOptions = {},
+  loadOptions: LoadOptions = {}
 ): Promise<Font> => {
-  return (await new Font().load_filelines(filelines)).encoding(encodingOptions)
+  const font = new Font().encoding(encodingOptions)
+  if (typeof source === 'string') {
+    font.load_string(source)
+  } else if (isBinary(source)) {
+    await font.load_bytes_async(source, loadOptions)
+  } else if (isURL(source)) {
+    await font.load_url(source, undefined, loadOptions)
+  } else {
+    await font.load_filelines(source)
+  }
+  return font
 }
 
 /**

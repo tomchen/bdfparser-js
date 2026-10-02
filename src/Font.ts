@@ -1,30 +1,659 @@
-import { Bitmap } from './Bitmap'
+import { Bitmap, fmtnum } from './Bitmap'
 import {
   DIRE_MAP,
   DIRE_SHORTCUT_MAP,
   EMPTY_GLYPH,
   META_TITLES,
-  NO_QUOTE_PROPS,
   PATTERN_VVECTOR_DELIMITER,
 } from './constants'
-import { Glyph } from './Glyph'
 import {
-  setProperty,
+  CharsetCodec,
+  IconvLike,
+  canonicalCharset,
+  charsetProps,
+  detectGL,
+  getCodec,
+  isUnicodeCharset,
+  sanitizeCharset,
+} from './encoding'
+import { BDFParseError } from './errors'
+import { Glyph, defaultglyphname, listToMeta, metaToList } from './Glyph'
+import { readPcf, writePcf } from './pcf'
+import { readTtf, writeTtf } from './ttf'
+import {
+  BdfHeaders,
   CodepointRangeType,
   DirectionNumberType,
   DirectionPartType,
   DirectionType,
+  GlyphDrawModeType,
   GlyphMeta,
   GlyphMetaInFont,
-  GlyphMetaInFontTemp,
-  GlyphMetaTemp,
-  BdfHeadersTemp,
   OrderType,
+  PropValue,
   Props,
-  BdfHeaders,
+  UnencodedGlyph,
 } from './types'
-import { char2cp, cp2char, sanitizeCharsetName } from './encoding'
-import iconvlite from 'iconv-lite'
+import { warn } from './warn'
+
+/** Options of {@link Font.encoding} */
+export type EncodingOptions = {
+  /** `iconv-lite` (or compatible) instance, for codecs `TextDecoder` does not support */
+  iconv?: IconvLike
+  /** force a charset name (instead of the one derived from `CHARSET_REGISTRY` / `CHARSET_ENCODING`); `''` or `null` clears it */
+  charset?: string | null
+  /** customized character → codepoint function */
+  char2cp?: (char: string) => number | null | undefined
+  /** customized codepoint → character function */
+  cp2char?: (cp: number) => string | null | undefined
+}
+
+/** Options of {@link Font.create} (SPEC-v3 §2.6) */
+export type FontCreateOptions = {
+  /** pixel size (em height in pixels), default 16 */
+  pixelsize?: number
+  /** ascent in pixels, default `pixelsize - descent` */
+  ascent?: number
+  /** descent in pixels, default `floor(pixelsize / 8)` */
+  descent?: number
+  /** `FONT` name, default `familyname` */
+  fontname?: string
+  /** `FAMILY_NAME`, default `'Untitled'` */
+  familyname?: string
+  /** x resolution, default 75 */
+  xres?: number
+  /** y resolution, default 75 */
+  yres?: number
+}
+
+/** Options of {@link Font.load_bytes} / {@link Font.load_url} */
+export type LoadOptions = {
+  /** pixel size, required to load TrueType fonts without a `BDFP` table */
+  pixelsize?: number
+}
+
+/** Options of {@link Font.newglyph} */
+export type NewglyphOptions = {
+  /** bitmap of the glyph (see `Glyph.setbitmap`) */
+  bitmap?: Bitmap | null
+  /** placement mode of `bitmap` (see `Glyph.setbitmap`), default 0 */
+  mode?: GlyphDrawModeType
+  /** glyph name, default `defaultglyphname(cp)` */
+  name?: string | null
+  /** DWIDTH x, default `bitmap.width()` (or `FONTBOUNDINGBOX` width without bitmap) */
+  dwidth?: number | null
+}
+
+/** Options of {@link Font.tosvgfont} */
+export type SvgFontOptions = {
+  /** Offsets (to the right (x) top (y)) to apply to all glyphs' SVG paths, default `{ x: 0, y: 0 }` */
+  pathOffsets?: { x?: number; y?: number }
+  unicodeAttr?: {
+    /**
+     * no `unicode` attribute for `<glyph>` of control characters (< U+0020), default `false`
+     * - `false` is compatible with FontForge which can't load SVG font with control character `<glyph>` having `unicode` attribute
+     * - `true` is compatible with `svg2ttf` JavaScript library which skips control character `<glyph>` without `unicode` attribute
+     */
+    controlCharNoSkip?: boolean
+    /**
+     * Format of the `unicode` attribute for `<glyph>`, default `'hexncr'`
+     * - `'hexncr'`: hex NCR, e.g. `unicode="&#x4ab;"`
+     * - `'decncr'`: decimal NCR, e.g. `unicode="&#1195;"`
+     * - `'char'`: character itself (with XML escape for a few characters), e.g. `unicode="a"`, `unicode="&amp;"`, `unicode="的"`
+     */
+    format?: 'hexncr' | 'decncr' | 'char'
+  }
+}
+
+type DrawOptions = {
+  linelimit?: number | null
+  mode?: 0 | 1 | null
+  direction?: DirectionType | null
+  usecurrentglyphspacing?: boolean | null
+  missing?: Glyph | GlyphMeta | null
+}
+
+const RE_INT = /^[+-]?\d+$/
+
+const REQUIRED_HEADERS = [
+  'pointsize',
+  'xres',
+  'yres',
+  'fbbx',
+  'fbby',
+  'fbbxoff',
+  'fbbyoff',
+] as const
+
+/** `round(v) = floor(v + 0.5)` (SPEC-v3 rounding rule) */
+const rnd = (v: number): number => Math.floor(v + 0.5)
+
+/** BDF version formatting: integral → `"{n}.0"`, else shortest repr */
+const fmtver = (v: number): string =>
+  Number.isInteger(v) ? `${v}.0` : String(v)
+
+/** Remove one pair of surrounding double quotes */
+const stripQuotePair = (s: string): string =>
+  s.length >= 2 && s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s
+
+const cloneList = (list: GlyphMetaInFont): GlyphMetaInFont => {
+  const l = [...list] as GlyphMetaInFont
+  l[16] = [...list[16]]
+  return l
+}
+
+/** Whether a codepoint passes an `itercps` range filter */
+const cpInRange = (cp: number, r: CodepointRangeType | null): boolean => {
+  if (r === null) {
+    return true
+  }
+  if (typeof r === 'number') {
+    return cp < r
+  }
+  if (r.length === 2 && typeof r[0] === 'number' && typeof r[1] === 'number') {
+    return cp >= r[0] && cp <= (r[1] as number)
+  }
+  for (const t of r as [number, number][]) {
+    if (Array.isArray(t) && cp >= t[0] && cp <= t[1]) {
+      return true
+    }
+  }
+  return false
+}
+
+/** `Uint8Array` view of bytes (works across realms) */
+const toBytes = (
+  data: Uint8Array | ArrayBuffer | ArrayBufferView
+): Uint8Array => {
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  }
+  if (Object.prototype.toString.call(data) === '[object ArrayBuffer]') {
+    return new Uint8Array(data as ArrayBuffer)
+  }
+  throw new TypeError('Expected a Uint8Array, an ArrayBuffer or a typed array')
+}
+
+const isGzip = (b: Uint8Array): boolean =>
+  b.length >= 2 && b[0] === 0x1f && b[1] === 0x8b
+
+/**
+ * Decompress gzip data with the standard `DecompressionStream` (browsers,
+ * Node ≥ 18, Deno, Bun).
+ *
+ * @internal
+ */
+export const gunzip = async (data: Uint8Array): Promise<Uint8Array> => {
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error(
+      'Cannot decompress gzip data: DecompressionStream is not available'
+    )
+  }
+  const ds = new DecompressionStream('gzip')
+  const writer = ds.writable.getWriter()
+  const written = writer
+    .write(data as Uint8Array<ArrayBuffer>)
+    .then(() => writer.close())
+  // avoid an unhandled rejection; the error is reported by the reader
+  written.catch(() => undefined)
+  const reader = ds.readable.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+    chunks.push(value)
+    total += value.length
+  }
+  await written
+  const out = new Uint8Array(total)
+  let o = 0
+  for (const c of chunks) {
+    out.set(c, o)
+    o += c.length
+  }
+  return out
+}
+
+/** keyword → index of the first of the two slots in the 17-slot glyph list */
+const GLYPH_METRICS: Record<string, number> = {
+  SWIDTH: 6,
+  DWIDTH: 8,
+  SWIDTH1: 10,
+  DWIDTH1: 12,
+  VVECTOR: 14,
+}
+const GLOBAL_METRICS: Record<string, [keyof BdfHeaders, keyof BdfHeaders]> = {
+  SWIDTH: ['swx0', 'swy0'],
+  DWIDTH: ['dwx0', 'dwy0'],
+  SWIDTH1: ['swx1', 'swy1'],
+  DWIDTH1: ['dwx1', 'dwy1'],
+  VVECTOR: ['vvectorx', 'vvectory'],
+}
+const NO_PROPS_WARNING =
+  "It looks like the font does not have property block beginning with 'STARTPROPERTIES' keyword"
+
+/**
+ * Parser states: 0 header, 1 properties, 2 after properties (expect CHARS),
+ * 3 between glyphs, 4 in glyph, 5 in BITMAP, 6 after ENDFONT
+ */
+type ParserState = 0 | 1 | 2 | 3 | 4 | 5 | 6
+
+/**
+ * Line-based BDF parser (SPEC-v3 §3), same state machine (and warnings) as
+ * the Python implementation. Feed lines (with or without line endings) then
+ * call `finish()`.
+ */
+class BdfParser {
+  private lineno = 0
+  private state: ParserState = 0
+  private chars: number | null = null
+  private propcount: number | null = null
+  private propseen = 0
+  private nglyphs = 0
+  private meta: unknown[] = []
+  private used = new Set<string>()
+  private startline = 0
+  private altcode: number | null = null
+  private headers: Record<string, unknown>
+
+  constructor(private font: Font) {
+    this.headers = font.headers as unknown as Record<string, unknown>
+  }
+
+  /** feed a whole text (a final line break does not start a new line) */
+  feedText(text: string): void {
+    const lines = text.split(/\r\n|\r|\n/)
+    if (lines[lines.length - 1] === '') {
+      lines.pop()
+    }
+    for (const l of lines) {
+      this.line(l)
+    }
+  }
+
+  /** feed one line (a chunk containing line breaks is split into lines) */
+  feed(chunk: string): void {
+    if (chunk.indexOf('\n') === -1 && chunk.indexOf('\r') === -1) {
+      this.line(chunk)
+    } else {
+      this.feedText(chunk)
+    }
+  }
+
+  /** parse `n` integers (at least `n` tokens required) */
+  private ints(
+    value: string,
+    n: number,
+    key: string,
+    sep: RegExp = /\s+/
+  ): number[] {
+    const v = value.trim()
+    const parts = v === '' ? [] : v.split(sep)
+    if (parts.length < n) {
+      throw new BDFParseError(
+        `${key} needs ${n} numbers, got ${JSON.stringify(value)}`,
+        this.lineno
+      )
+    }
+    return parts.slice(0, n).map((t) => {
+      if (!RE_INT.test(t)) {
+        throw new BDFParseError(
+          `malformed number in ${key} ${JSON.stringify(value)}`,
+          this.lineno
+        )
+      }
+      return parseInt(t, 10)
+    })
+  }
+
+  private endHeaders(): void {
+    if (!('metricsset' in this.headers)) {
+      this.headers.metricsset = 0
+    }
+  }
+
+  private startGlyph(value: string): void {
+    this.meta = [value, ...Array<null>(15).fill(null), []]
+    this.used = new Set()
+    this.startline = this.lineno
+    this.altcode = null
+    this.nglyphs++
+  }
+
+  private finishGlyph(): void {
+    const meta = this.meta as GlyphMetaInFont
+    const name = meta[0]
+    const font = this.font
+    if (!this.used.has('BBX')) {
+      throw new BDFParseError(
+        `glyph '${name}' (starting at line ${this.startline}) has no BBX`,
+        this.lineno
+      )
+    }
+    if (!this.used.has('ENCODING')) {
+      warn(
+        `line ${this.startline}: glyph '${name}' has no ENCODING, treated as unencoded`
+      )
+      meta[1] = -1
+    }
+    if (meta[1] < 0) {
+      if (meta[1] !== -1) {
+        warn(
+          `line ${this.startline}: glyph '${name}' has negative ENCODING ${meta[1]}, treated as unencoded`
+        )
+        meta[1] = -1
+      }
+      font.unencoded.push({ altcode: this.altcode, meta })
+      return
+    }
+    const cp = meta[1]
+    if (font.glyphs.has(cp)) {
+      warn(
+        `line ${this.startline}: duplicate codepoint ${cp} (glyph '${name}'), the later one wins`
+      )
+      font.glyphs.delete(cp)
+    }
+    font.glyphs.set(cp, meta)
+  }
+
+  private missingEndchar(): void {
+    warn(
+      `line ${this.lineno}: missing ENDCHAR for glyph '${String(this.meta[0])}'`
+    )
+  }
+
+  private line(raw: string): void {
+    this.lineno++
+    if (this.state === 6) {
+      return
+    }
+    const line = raw.trim()
+    if (line === '') {
+      return
+    }
+    const sp = line.search(/\s/)
+    const key = sp === -1 ? line : line.slice(0, sp)
+    const value = sp === -1 ? '' : line.slice(sp).trim()
+    const meta = this.meta
+    const font = this.font
+    const headers = this.headers
+
+    switch (this.state) {
+      case 5: // BITMAP rows
+        if (key === 'ENDCHAR') {
+          this.finishGlyph()
+          this.state = 3
+        } else if (key === 'STARTCHAR') {
+          this.missingEndchar()
+          this.finishGlyph()
+          this.startGlyph(value)
+          this.state = 4
+        } else if (key === 'ENDFONT') {
+          this.missingEndchar()
+          this.finishGlyph()
+          this.state = 6
+        } else {
+          ;(meta[16] as string[]).push(line)
+        }
+        return
+
+      case 4: // inside a glyph, before BITMAP
+        if (key === 'ENCODING') {
+          if (!this.used.has(key)) {
+            const parts = value === '' ? [] : value.split(/\s+/)
+            if (parts.length === 0) {
+              throw new BDFParseError('ENCODING needs a number', this.lineno)
+            }
+            const nums = parts.slice(0, 2).map((t) => {
+              if (!RE_INT.test(t)) {
+                throw new BDFParseError(
+                  `malformed number in ENCODING ${JSON.stringify(value)}`,
+                  this.lineno
+                )
+              }
+              return parseInt(t, 10)
+            })
+            meta[1] = nums[0]
+            if (nums[0] < 0 && nums.length > 1) {
+              this.altcode = nums[1]
+            }
+            this.used.add(key)
+          }
+        } else if (key === 'BBX') {
+          if (!this.used.has(key)) {
+            meta.splice(2, 4, ...this.ints(value, 4, key))
+            this.used.add(key)
+          }
+        } else if (key in GLYPH_METRICS) {
+          if (!this.used.has(key)) {
+            const i = GLYPH_METRICS[key]
+            meta.splice(
+              i,
+              2,
+              ...this.ints(
+                value,
+                2,
+                key,
+                key === 'VVECTOR' ? PATTERN_VVECTOR_DELIMITER : undefined
+              )
+            )
+            this.used.add(key)
+          }
+        } else if (key === 'BITMAP') {
+          this.state = 5
+        } else if (key === 'ENDCHAR') {
+          this.finishGlyph()
+          this.state = 3
+        } else if (key === 'STARTCHAR') {
+          this.missingEndchar()
+          this.finishGlyph()
+          this.startGlyph(value)
+        } else if (key === 'ENDFONT') {
+          this.missingEndchar()
+          this.finishGlyph()
+          this.state = 6
+        } else {
+          warn(
+            `line ${this.lineno}: unknown keyword '${key}' in glyph '${String(meta[0])}' ignored`
+          )
+        }
+        return
+
+      case 3: // between glyphs
+        if (key === 'STARTCHAR') {
+          this.startGlyph(value)
+          this.state = 4
+        } else if (key === 'ENDFONT') {
+          this.state = 6
+        } else if (key === 'CHARS' && this.chars === null) {
+          this.chars = this.ints(value, 1, key)[0]
+        } else {
+          warn(`line ${this.lineno}: unexpected line '${line}' ignored`)
+        }
+        return
+
+      case 1: // properties
+        if (key === 'ENDPROPERTIES') {
+          if (this.propcount !== null && this.propcount !== this.propseen) {
+            warn(
+              `The property count next to 'STARTPROPERTIES' keyword is ${this.propcount}, which does not match the actual property count ${this.propseen}`
+            )
+          }
+          this.state = 2
+        } else if (key === 'COMMENT') {
+          if (!Array.isArray(font.props.comment)) {
+            font.props.comment = []
+          }
+          font.props.comment.push(stripQuotePair(value))
+        } else if (
+          key === 'CHARS' ||
+          key === 'STARTCHAR' ||
+          key === 'ENDFONT'
+        ) {
+          warn(`line ${this.lineno}: missing 'ENDPROPERTIES'`)
+          if (key === 'CHARS') {
+            this.chars = this.ints(value, 1, key)[0]
+            this.state = 3
+          } else if (key === 'STARTCHAR') {
+            warn("Cannot find 'CHARS' line")
+            this.startGlyph(value)
+            this.state = 4
+          } else {
+            warn('This font does not have any glyphs')
+            this.state = 6
+          }
+        } else {
+          const k = key.toLowerCase()
+          this.propseen++
+          font.props[k] = value === '' ? null : this.propvalue(value)
+          font._propnames.set(k, key)
+        }
+        return
+
+      case 2: // after ENDPROPERTIES
+        if (key === 'CHARS') {
+          this.chars = this.ints(value, 1, key)[0]
+          this.state = 3
+        } else if (key === 'STARTCHAR') {
+          warn("Cannot find 'CHARS' line next to 'ENDPROPERTIES' line")
+          this.startGlyph(value)
+          this.state = 4
+        } else if (key === 'ENDFONT') {
+          warn('This font does not have any glyphs')
+          this.state = 6
+        } else {
+          warn(`line ${this.lineno}: unexpected line '${line}' ignored`)
+        }
+        return
+    }
+
+    // state 0: header
+    if (key === 'STARTFONT') {
+      const v = Number(value)
+      if (value === '' || Number.isNaN(v)) {
+        throw new BDFParseError(
+          `malformed version number in STARTFONT ${JSON.stringify(value)}`,
+          this.lineno
+        )
+      }
+      headers.bdfversion = v
+    } else if (key === 'FONT') {
+      headers.fontname = value
+    } else if (key === 'SIZE') {
+      ;[headers.pointsize, headers.xres, headers.yres] = this.ints(
+        value,
+        3,
+        key
+      )
+    } else if (key === 'FONTBOUNDINGBOX') {
+      ;[headers.fbbx, headers.fbby, headers.fbbxoff, headers.fbbyoff] =
+        this.ints(value, 4, key)
+    } else if (key === 'COMMENT') {
+      if (!Array.isArray(headers.comment)) {
+        headers.comment = []
+      }
+      ;(headers.comment as string[]).push(stripQuotePair(value))
+    } else if (key === 'METRICSSET' || key === 'CONTENTVERSION') {
+      headers[key.toLowerCase()] = this.ints(value, 1, key)[0]
+    } else if (key in GLOBAL_METRICS) {
+      const [k0, k1] = GLOBAL_METRICS[key]
+      ;[headers[k0], headers[k1]] = this.ints(
+        value,
+        2,
+        key,
+        key === 'VVECTOR' ? PATTERN_VVECTOR_DELIMITER : undefined
+      )
+    } else if (key === 'STARTPROPERTIES') {
+      this.endHeaders()
+      const first = value.split(/\s+/)[0]
+      if (value === '') {
+        this.propcount = null
+      } else if (RE_INT.test(first)) {
+        this.propcount = parseInt(first, 10)
+      } else {
+        warn(
+          `line ${this.lineno}: malformed property count ${JSON.stringify(value)}`
+        )
+      }
+      this.state = 1
+    } else if (key === 'CHARS') {
+      warn(NO_PROPS_WARNING)
+      this.endHeaders()
+      this.chars = this.ints(value, 1, key)[0]
+      this.state = 3
+    } else if (key === 'STARTCHAR') {
+      warn(NO_PROPS_WARNING)
+      warn("Cannot find 'CHARS' line")
+      this.endHeaders()
+      this.startGlyph(value)
+      this.state = 4
+    } else if (key === 'ENDFONT') {
+      warn(NO_PROPS_WARNING)
+      warn('This font does not have any glyphs')
+      this.endHeaders()
+      this.state = 6
+    } else {
+      warn(`line ${this.lineno}: unknown header keyword '${key}' ignored`)
+    }
+  }
+
+  private propvalue(value: string): string | number {
+    if (value[0] === '"') {
+      let out = ''
+      let i = 1
+      const n = value.length
+      while (i < n) {
+        const c = value[i]
+        if (c === '"') {
+          if (i + 1 < n && value[i + 1] === '"') {
+            out += '"'
+            i += 2
+            continue
+          }
+          return out
+        }
+        out += c
+        i++
+      }
+      warn(`line ${this.lineno}: property value has no closing quote`)
+      return out
+    }
+    if (RE_INT.test(value)) {
+      return parseInt(value, 10)
+    }
+    return value
+  }
+
+  finish(): void {
+    if (this.state <= 1) {
+      throw new BDFParseError(
+        'Unexpected end of file before the end of the headers',
+        this.lineno + 1
+      )
+    }
+    if (this.state === 4 || this.state === 5) {
+      warn(
+        `Unexpected end of file: missing ENDCHAR for glyph '${String(this.meta[0])}'`
+      )
+      this.finishGlyph()
+    }
+    if (this.state !== 6) {
+      warn("This font does not have 'ENDFONT' keyword")
+    }
+    if (this.state >= 3 && (this.chars !== null || this.nglyphs > 0)) {
+      if (this.chars === null) {
+        warn("The glyph count next to 'CHARS' keyword does not exist")
+      } else if (this.chars !== this.nglyphs) {
+        warn(
+          `The glyph count next to 'CHARS' keyword is ${this.chars}, which does not match the actual glyph count ${this.nglyphs}`
+        )
+      }
+    }
+  }
+}
 
 /**
  * `Font` object
@@ -32,425 +661,336 @@ import iconvlite from 'iconv-lite'
  * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font}
  */
 export class Font {
-  public headers: BdfHeaders | undefined = undefined
-  private __headers: BdfHeadersTemp = {}
+  /** Global headers (`bdfversion`, `fontname`, `pointsize`, ...), `{}` before loading */
+  public headers: BdfHeaders = {} as BdfHeaders
+  /** Properties, keys in lower case; values `number`, `string` or `null`; `comment` → `string[]` */
   public props: Props = {}
+  /** codepoint → 17-slot glyph list, file order */
   public glyphs: Map<number, GlyphMetaInFont> = new Map()
-  public unencoded: { altcode: number | null; meta: GlyphMetaInFont }[] = []
-  /** @internal lower-case property name -> original spelling */
+  /** Glyphs with `ENCODING -1`, file order */
+  public unencoded: UnencodedGlyph[] = []
+  /** @internal lower-case property name → original spelling */
   public _propnames: Map<string, string> = new Map()
-  private __glyph_count_to_check: number | null = null
-  private __curline_startchar: string | null = null
-  private __curline_chars: string | null = null
-  private __f?: AsyncIterableIterator<string>
-  private __iconv?: typeof iconvlite
-  public charset = 'utf8'
-  public char2cp = (char: string): number | undefined => {
-    return char2cp(char, this.charset, this.__iconv)
-  }
-  public cp2char = (cp: number): string => {
-    return cp2char(cp, this.charset, this.__iconv)
+  private __iconv?: IconvLike
+  private __charset: string | null = null
+  private __char2cp: EncodingOptions['char2cp'] | null = null
+  private __cp2char: EncodingOptions['cp2char'] | null = null
+  private __codec: CharsetCodec | null = null
+  private __warnedCharsets = new Set<string>()
+
+  // -------------------------------------------------------------------------
+  // Loading
+
+  private __reset(): void {
+    this.headers = {} as BdfHeaders
+    this.props = {}
+    this.glyphs = new Map()
+    this.unencoded = []
+    this._propnames = new Map()
+    this.__codec = null
   }
 
   /**
-   * Load the BDF font file (file line async iterator).
+   * Load a BDF font from lines (async or sync iterable of strings, e.g. from
+   * `readlineiter` / `fetchline` or an array of lines).
    *
-   * @param filelines - Asynchronous iterable iterator containing each line in string text from the font file
+   * @param filelines - Iterable of lines (line endings are tolerated)
    *
    * @returns The current `Font` object
+   *
+   * @throws BDFParseError on fatal parse errors
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#load_filelines}
    */
   async load_filelines(
-    filelines: AsyncIterableIterator<string>
+    filelines: AsyncIterable<string> | Iterable<string>
   ): Promise<this> {
-    try {
-      this.__f = filelines
-      await this.__parse_headers()
-    } finally {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      if (typeof Deno !== 'undefined') {
-        // Deno needs to run to the end and close the file
-        if (this.__f !== undefined) {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          for await (const _ of this.__f) {
-          }
-        }
-      }
+    this.__reset()
+    const parser = new BdfParser(this)
+    for await (const line of filelines) {
+      parser.feed(line)
     }
+    parser.finish()
     return this
   }
 
   /**
-   * Load encoding options
+   * Load a BDF font from its text.
    *
-   * Pass iconv instance, or define customized character and codepoint conversion methods, so a non-Unicode encoding can be used
+   * @param text - BDF file content (LF, CRLF or CR line endings)
    *
-   * @param options - Encoding options
-   * @param options.iconv - iconv-lite instance
-   * @param options.charset - force a charset name
-   * @param options.char2cp - use a customized character to codepoint method
-   * @param options.cp2char - use a customized codepoint to character method
+   * @returns The current `Font` object
+   *
+   * @throws BDFParseError on fatal parse errors
+   */
+  load_string(text: string): this {
+    this.__reset()
+    const parser = new BdfParser(this)
+    parser.feedText(text)
+    parser.finish()
+    return this
+  }
+
+  /**
+   * Load a font from bytes, auto-detecting the format: PCF (`\x01fcp`),
+   * TrueType (`00 01 00 00` / `true`), else BDF text (UTF-8). Gzip-compressed
+   * data must be decompressed first (or loaded with `load_url()` / `$Font()`
+   * which do it asynchronously).
+   *
+   * @param data - File content
+   * @param options.pixelsize - pixel size for TrueType fonts without a `BDFP` table
    *
    * @returns The current `Font` object
    */
-  encoding(
-    options: {
-      iconv?: typeof iconvlite
-      charset?: string
-      char2cp?: (char: string) => number
-      cp2char?: (cp: number) => string
-    } = {}
+  load_bytes(
+    data: Uint8Array | ArrayBuffer | ArrayBufferView,
+    options: LoadOptions = {}
   ): this {
+    const b = toBytes(data)
+    const magic = String.fromCharCode(...b.subarray(0, 4))
+    if (magic === '\x01fcp') {
+      return this.__adopt(readPcf(b))
+    }
+    if (isGzip(b)) {
+      throw new Error(
+        'gzip-compressed data cannot be loaded synchronously: decompress it first, or use load_url() / $Font()'
+      )
+    }
+    if (magic === '\x00\x01\x00\x00' || magic === 'true') {
+      return this.__adopt(readTtf(b, { pixelsize: options.pixelsize }))
+    }
+    if (magic === 'OTTO') {
+      throw new Error('CFF-based OpenType is not supported')
+    }
+    return this.load_string(new TextDecoder('utf-8').decode(b))
+  }
+
+  /**
+   * Fetch and load a font (BDF, PCF, gzip-compressed PCF/BDF or TrueType)
+   * with the global `fetch` (browsers, Node ≥ 18, Deno, Bun).
+   *
+   * @param url - URL of the font file
+   * @param init - `fetch` options
+   * @param options.pixelsize - pixel size for TrueType fonts without a `BDFP` table
+   *
+   * @returns Promise of the current `Font` object
+   */
+  async load_url(
+    url: string | URL,
+    init?: RequestInit,
+    options: LoadOptions = {}
+  ): Promise<this> {
+    const res = await fetch(url, init)
+    if (!res.ok) {
+      throw new Error(
+        `Failed to fetch ${String(url)}: ${res.status} ${res.statusText}`
+      )
+    }
+    return this.load_bytes_async(
+      new Uint8Array(await res.arrayBuffer()),
+      options
+    )
+  }
+
+  /**
+   * Same as {@link Font.load_bytes} but also accepts gzip-compressed data
+   * (decompressed with `DecompressionStream`).
+   *
+   * @param data - File content
+   * @param options.pixelsize - pixel size for TrueType fonts without a `BDFP` table
+   *
+   * @returns Promise of the current `Font` object
+   */
+  async load_bytes_async(
+    data: Uint8Array | ArrayBuffer | ArrayBufferView,
+    options: LoadOptions = {}
+  ): Promise<this> {
+    let b = toBytes(data)
+    if (isGzip(b)) {
+      b = await gunzip(b)
+    }
+    return this.load_bytes(b, options)
+  }
+
+  private __adopt(other: Font): this {
+    this.headers = other.headers
+    this.props = other.props
+    this._propnames = other._propnames
+    this.glyphs = other.glyphs
+    this.unencoded = other.unencoded
+    this.__codec = null
+    return this
+  }
+
+  /**
+   * Create a new, empty font (SPEC-v3 §2.6).
+   *
+   * @param options - see {@link FontCreateOptions}
+   *
+   * @returns New `Font` object
+   *
+   * @example
+   * const font = Font.create({ pixelsize: 8, familyname: 'Tiny' })
+   * font.newglyph(0x41, Bitmap.fromstring('.##.\n#..#\n####\n#..#'))
+   */
+  static create(options: FontCreateOptions = {}): Font {
+    const pixelsize = options.pixelsize ?? 16
+    const descent = options.descent ?? Math.floor(pixelsize / 8)
+    const ascent = options.ascent ?? pixelsize - descent
+    const familyname = options.familyname ?? 'Untitled'
+    const fontname = options.fontname ?? familyname
+    const font = new Font()
+    font.headers = {
+      bdfversion: 2.1,
+      fontname,
+      pointsize: pixelsize,
+      xres: options.xres ?? 75,
+      yres: options.yres ?? 75,
+      fbbx: pixelsize,
+      fbby: ascent + descent,
+      fbbxoff: 0,
+      fbbyoff: -descent,
+      metricsset: 0,
+    }
+    font
+      .setprop('FAMILY_NAME', familyname)
+      .setprop('PIXEL_SIZE', pixelsize)
+      .setprop('FONT_ASCENT', ascent)
+      .setprop('FONT_DESCENT', descent)
+      .setprop('CHARSET_REGISTRY', 'ISO10646')
+      .setprop('CHARSET_ENCODING', '1')
+    return font
+  }
+
+  // -------------------------------------------------------------------------
+  // Encoding
+
+  /**
+   * Set encoding options: force a charset, pass an `iconv-lite` instance, or
+   * define customized character ⇄ codepoint conversion functions.
+   *
+   * @param options - see {@link EncodingOptions}
+   *
+   * @returns The current `Font` object
+   */
+  encoding(options: EncodingOptions = {}): this {
     if (options.iconv !== undefined) {
       this.__iconv = options.iconv
     }
     if (options.charset !== undefined) {
-      this.charset = options.charset
+      this.__charset = options.charset
+        ? canonicalCharset(options.charset)
+        : null
     }
     if (options.char2cp !== undefined) {
-      this.char2cp = options.char2cp
+      this.__char2cp = options.char2cp
     }
     if (options.cp2char !== undefined) {
-      this.cp2char = options.cp2char
+      this.__cp2char = options.cp2char
     }
+    this.__codec = null
     return this
   }
 
-  private async __parse_headers(): Promise<void> {
-    while (1) {
-      let line: string = (await this.__f?.next())?.value.trim()
-      while (line.length === 0) {
-        line = (await this.__f?.next())?.value.trim()
-      }
-      const kvlist = line.split(/ (.+)/, 2)
-      const l = kvlist.length
-      let nlist: string[]
-      if (l === 2) {
-        const key = kvlist[0]
-        const value = kvlist[1].trim()
-        switch (key) {
-          case 'STARTFONT':
-            this.__headers['bdfversion'] = parseFloat(value)
-            break
-          case 'FONT':
-            this.__headers['fontname'] = value
-            break
-          case 'SIZE':
-            nlist = value.split(' ')
-            this.__headers['pointsize'] = parseInt(nlist[0], 10)
-            this.__headers['xres'] = parseInt(nlist[1], 10)
-            this.__headers['yres'] = parseInt(nlist[2], 10)
-            break
-          case 'FONTBOUNDINGBOX':
-            nlist = value.split(' ')
-            this.__headers['fbbx'] = parseInt(nlist[0], 10)
-            this.__headers['fbby'] = parseInt(nlist[1], 10)
-            this.__headers['fbbxoff'] = parseInt(nlist[2], 10)
-            this.__headers['fbbyoff'] = parseInt(nlist[3], 10)
-            break
-          case 'STARTPROPERTIES':
-            this.__parse_headers_after()
-            await this.__parse_props()
-            return
-          case 'COMMENT':
-            if (
-              !('comment' in this.__headers) ||
-              !Array.isArray(this.__headers.comment)
-            ) {
-              this.__headers.comment = []
-            }
-            this.__headers.comment.push(
-              value.replace(/^[\s"'\t\r\n]+|[\s"'\t\r\n]+$/g, '')
-            )
-            break
-          case 'SWIDTH':
-            nlist = value.split(' ')
-            this.__headers['swx0'] = parseInt(nlist[0], 10)
-            this.__headers['swy0'] = parseInt(nlist[1], 10)
-            break
-          case 'DWIDTH':
-            nlist = value.split(' ')
-            this.__headers['dwx0'] = parseInt(nlist[0], 10)
-            this.__headers['dwy0'] = parseInt(nlist[1], 10)
-            break
-          case 'SWIDTH1':
-            nlist = value.split(' ')
-            this.__headers['swx1'] = parseInt(nlist[0], 10)
-            this.__headers['swy1'] = parseInt(nlist[1], 10)
-            break
-          case 'DWIDTH1':
-            nlist = value.split(' ')
-            this.__headers['dwx1'] = parseInt(nlist[0], 10)
-            this.__headers['dwy1'] = parseInt(nlist[1], 10)
-            break
-          case 'VVECTOR':
-            nlist = PATTERN_VVECTOR_DELIMITER.split(value)
-            this.__headers['vvectorx'] = parseInt(nlist[0], 10)
-            this.__headers['vvectory'] = parseInt(nlist[1], 10)
-            break
-          case 'METRICSSET':
-          case 'CONTENTVERSION':
-            this.__headers[<'metricsset' | 'contentversion'>key.toLowerCase()] =
-              parseInt(value, 10)
-            break
-          case 'CHARS':
-            console.warn(
-              "It looks like the font does not have property block beginning with 'STARTPROPERTIES' keyword"
-            )
-            this.__parse_headers_after()
-            this.__curline_chars = line
-            await this.__parse_glyph_count()
-            return
-          case 'STARTCHAR':
-            console.warn(
-              "It looks like the font does not have property block beginning with 'STARTPROPERTIES' keyword"
-            )
-            console.warn("Cannot find 'CHARS' line")
-            this.__parse_headers_after()
-            this.__curline_startchar = line
-            await this.__prepare_glyphs()
-            return
-        }
-      }
-      if (l === 1 && kvlist[0].trim() === 'ENDFONT') {
-        console.warn(
-          "It looks like the font does not have property block beginning with 'STARTPROPERTIES' keyword"
+  /**
+   * Resolved charset (canonical key, SPEC-v3 §4): the one forced by
+   * `encoding({ charset })` if any, else derived from the `CHARSET_REGISTRY` /
+   * `CHARSET_ENCODING` properties (`'iso10646'` if missing).
+   */
+  get charset(): string {
+    return (
+      this.__charset ??
+      sanitizeCharset(
+        this.props.charset_registry as string | number | null | undefined,
+        this.props.charset_encoding as string | number | null | undefined
+      )
+    )
+  }
+
+  /** Same as `encoding({ charset })` */
+  set charset(value: string) {
+    this.encoding({ charset: value })
+  }
+
+  private __getcodec(): CharsetCodec {
+    if (this.__codec === null) {
+      const cs = this.charset
+      let codec = getCodec(cs, { iconv: this.__iconv })
+      if (
+        codec.gl94 &&
+        !codec.gl &&
+        detectGL(
+          this.props.charset_encoding as string | number | null | undefined,
+          this.glyphs.keys()
         )
-        console.warn('This font does not have any glyphs')
-        return
+      ) {
+        codec = getCodec(cs, { iconv: this.__iconv, gl: true })
       }
-    }
-  }
-
-  private __parse_headers_after(): void {
-    if (!('metricsset' in this.__headers)) {
-      this.__headers['metricsset'] = 0
-    }
-    this.headers = this.__headers as BdfHeaders
-  }
-
-  private async __parse_props(): Promise<void> {
-    while (1) {
-      let line: string = (await this.__f?.next())?.value.trim()
-      while (line.length === 0) {
-        line = (await this.__f?.next())?.value.trim()
-      }
-      const kvlist = line.split(/ (.+)/, 2)
-      const l = kvlist.length
-      if (l === 2) {
-        const key = kvlist[0]
-        const value = kvlist[1].replace(/^[\s"'\t\r\n]+|[\s"'\t\r\n]+$/g, '')
-        if (key === 'COMMENT') {
-          if (
-            !('comment' in this.props) ||
-            !Array.isArray(this.props.comment)
-          ) {
-            this.props.comment = []
-          }
-          this.props.comment.push(
-            value.replace(/^[\s"'\t\r\n]+|[\s"'\t\r\n]+$/g, '')
-          )
-        } else {
-          this.props[key.toLowerCase()] = NO_QUOTE_PROPS.includes(key)
-            ? parseInt(value, 10)
-            : value.replace(/""/g, '"')
-
-          if (key === 'CHARSET_REGISTRY') {
-            this.charset = sanitizeCharsetName(value.replace(/""/g, '"'))
-          }
-        }
-      } else {
-        if (l === 1) {
-          const key = kvlist[0].trim()
-          if (key === 'ENDPROPERTIES') {
-            await this.__parse_glyph_count()
-            return
-          }
-          if (key === 'ENDFONT') {
-            console.warn('This font does not have any glyphs')
-            return
-          } else {
-            this.props[key] = null
-          }
-        }
-      }
-    }
-  }
-
-  private async __parse_glyph_count(): Promise<void> {
-    let line: string
-    if (this.__curline_chars === null) {
-      line = (await this.__f?.next())?.value.trim()
-      while (line.length === 0) {
-        line = (await this.__f?.next())?.value.trim()
-      }
-    } else {
-      line = this.__curline_chars
-      this.__curline_chars = null
-    }
-    if (line.trim() === 'ENDFONT') {
-      console.warn('This font does not have any glyphs')
-      return
-    }
-    const kvlist = line.split(/ (.+)/, 2)
-    if (kvlist[0] === 'CHARS') {
-      this.__glyph_count_to_check = parseInt(kvlist[1].trim(), 10)
-    } else {
-      this.__curline_startchar = line
-      console.warn("Cannot find 'CHARS' line next to 'ENDPROPERTIES' line")
-    }
-    await this.__prepare_glyphs()
-  }
-
-  private async __prepare_glyphs(): Promise<void> {
-    let glyph_codepoint = 0
-    // Array(17).fill(null) 's tuple representation
-    // prettier-ignore
-    let glyph_meta: GlyphMetaInFontTemp = [
-      null, null, null, null, null, null, null, null, null, null,
-      null, null, null, null, null, null, null,
-    ] // TODO: remove initial value
-    let glyph_bitmap: string[] = [] // TODO: remove initial value
-    let glyph_bitmap_is_on = false
-    let glyph_end = false
-    while (1) {
-      let line: string
-      if (this.__curline_startchar === null) {
-        line = (await this.__f?.next())?.value
-      } else {
-        line = this.__curline_startchar
-        this.__curline_startchar = null
-      }
-      if (line === undefined || line === null) {
-        console.warn("This font does not have 'ENDFONT' keyword")
-        this.__prepare_glyphs_after()
-        return
-      }
-      const kvlist = line.split(/ (.+)/, 2)
-      const l = kvlist.length
-      if (l === 2) {
-        const key = kvlist[0]
-        const value = kvlist[1].trim()
-        let nlist: string[]
-        switch (key) {
-          case 'STARTCHAR':
-            // Array(17).fill(null) 's tuple representation
-            // prettier-ignore
-            glyph_meta = [
-              null, null, null, null, null, null, null, null, null, null,
-              null, null, null, null, null, null, null,
-            ]
-            glyph_meta[0] = value
-            glyph_end = false
-            break
-          case 'ENCODING':
-            glyph_codepoint = parseInt(value, 10)
-            glyph_meta[1] = glyph_codepoint
-            break
-          case 'SWIDTH':
-            nlist = value.split(' ')
-            glyph_meta[6] = parseInt(nlist[0], 10)
-            glyph_meta[7] = parseInt(nlist[1], 10)
-            break
-          case 'DWIDTH':
-            nlist = value.split(' ')
-            glyph_meta[8] = parseInt(nlist[0], 10)
-            glyph_meta[9] = parseInt(nlist[1], 10)
-            break
-          case 'SWIDTH1':
-            nlist = value.split(' ')
-            glyph_meta[10] = parseInt(nlist[0], 10)
-            glyph_meta[11] = parseInt(nlist[1], 10)
-            break
-          case 'DWIDTH1':
-            nlist = value.split(' ')
-            glyph_meta[12] = parseInt(nlist[0], 10)
-            glyph_meta[13] = parseInt(nlist[1], 10)
-            break
-          case 'VVECTOR':
-            nlist = PATTERN_VVECTOR_DELIMITER.split(value)
-            glyph_meta[14] = parseInt(nlist[0], 10)
-            glyph_meta[15] = parseInt(nlist[1], 10)
-            break
-          case 'BBX':
-            nlist = value.split(' ')
-            glyph_meta[2] = parseInt(nlist[0], 10)
-            glyph_meta[3] = parseInt(nlist[1], 10)
-            glyph_meta[4] = parseInt(nlist[2], 10)
-            glyph_meta[5] = parseInt(nlist[3], 10)
-            break
-        }
-      } else {
-        if (l === 1) {
-          const key = kvlist[0].trim()
-          switch (key) {
-            case 'BITMAP':
-              glyph_bitmap = []
-              glyph_bitmap_is_on = true
-              break
-            case 'ENDCHAR':
-              glyph_bitmap_is_on = false
-              glyph_meta[16] = glyph_bitmap
-              this.glyphs.set(glyph_codepoint, glyph_meta as GlyphMetaInFont)
-              glyph_end = true
-              break
-            case 'ENDFONT':
-              if (glyph_end) {
-                this.__prepare_glyphs_after()
-                return
-              }
-            default:
-              if (glyph_bitmap_is_on) {
-                glyph_bitmap.push(key)
-              }
-              break
-          }
-        }
-      }
-    }
-  }
-
-  private __prepare_glyphs_after(): void {
-    const l = this.glyphs.size
-    if (this.__glyph_count_to_check !== l) {
-      if (this.__glyph_count_to_check === null) {
-        console.warn("The glyph count next to 'CHARS' keyword does not exist")
-      } else {
-        console.warn(
-          `The glyph count next to 'CHARS' keyword is ${this.__glyph_count_to_check.toString()}, which does not match the actual glyph count ${l.toString()}`
+      if (!codec.known && !this.__warnedCharsets.has(cs)) {
+        this.__warnedCharsets.add(cs)
+        warn(
+          `Unknown charset '${cs}', characters are mapped to codepoints as Unicode`
         )
       }
+      this.__codec = codec
     }
+    return this.__codec
+  }
 
-    if (this.charset === 'gb2312') {
-      for (const [cp] of this.glyphs) {
-        // Check if the cp is a 2-byte number (256 <= key <= 65535)
-        if (cp >= 0x100 && cp <= 0xffff) {
-          const high = (cp >> 8) & 0xff
-          const low = cp & 0xff
-          // Check ISO-2022-CN range
-          if (high >= 0x21 && high <= 0x7e && low >= 0x21 && low <= 0x7e) {
-            this.charset = 'iso2022cn'
-          }
-          break
-        }
-      }
-    }
-
-    if (
-      this.charset === 'iso8859' &&
-      this.props.charset_encoding &&
-      /^(?!0$)\d+$/.test(this.props.charset_encoding as string)
-    ) {
-      // check charset_encoding is non-0 pure number
-      this.charset = 'iso8859' + this.props.charset_encoding
-    }
+  /** @internal invalidate the cached charset converter */
+  _invalidate(): void {
+    this.__codec = null
   }
 
   /**
-   * Set a property (case-insensitive key). Remembers the given spelling of a new key.
+   * Convert a character to a codepoint of this font's charset.
+   *
+   * @param char - Character (one code point)
+   *
+   * @returns Codepoint, or `null` if the character is not representable
+   */
+  char2cp(char: string): number | null {
+    if (this.__char2cp) {
+      return this.__char2cp(char) ?? null
+    }
+    return this.__getcodec().char2cp(char)
+  }
+
+  /**
+   * Convert a codepoint of this font's charset to a character.
+   *
+   * @param cp - Codepoint
+   *
+   * @returns Character, or `null` if the codepoint is not representable
+   */
+  cp2char(cp: number): string | null {
+    if (this.__cp2char) {
+      return this.__cp2char(cp) ?? null
+    }
+    return this.__getcodec().cp2char(cp)
+  }
+
+  // -------------------------------------------------------------------------
+  // Properties
+
+  /**
+   * Get a property (case-insensitive key).
+   *
+   * @param key - Property name
+   *
+   * @returns Value, or `null` if missing
+   */
+  getprop(key: string): PropValue | string[] {
+    const v = this.props[key.toLowerCase()]
+    return v === undefined ? null : v
+  }
+
+  /**
+   * Set a property (case-insensitive key). Remembers the given spelling of a
+   * new key (used when writing).
+   *
+   * @param key - Property name
+   * @param value - `number`, `string` or `null`
    *
    * @returns The current `Font` object
    */
@@ -460,26 +1000,48 @@ export class Font {
       this._propnames.set(k, key)
     }
     this.props[k] = value
+    this.__codec = null
     return this
   }
 
   /**
-   * Compute SWIDTH (scalable width, 1/1000 em) from DWIDTH (pixels).
+   * Delete a property (case-insensitive key), if present.
+   *
+   * @param key - Property name
+   *
+   * @returns The current `Font` object
+   */
+  delprop(key: string): this {
+    const k = key.toLowerCase()
+    delete this.props[k]
+    this._propnames.delete(k)
+    this.__codec = null
+    return this
+  }
+
+  /**
+   * Compute SWIDTH (scalable width, 1/1000 em) from DWIDTH (pixels):
+   * `round(dwx * 72000 / (pointsize * xres))`, or `round(dwx * 1000 / fbbx)`
+   * if `pointsize` or `xres` is missing.
+   *
+   * @param dwx - DWIDTH x in pixels
+   *
+   * @returns SWIDTH x
    */
   swidth(dwx: number): number {
     const pointsize = this.headers?.pointsize
     const xres = this.headers?.xres
     if (pointsize && xres) {
-      return Math.floor((dwx * 72000) / (pointsize * xres) + 0.5)
+      return rnd((dwx * 72000) / (pointsize * xres))
     }
-    return Math.floor((dwx * 1000) / Math.max(this.headers?.fbbx || 1, 1) + 0.5)
+    return rnd((dwx * 1000) / Math.max(this.headers?.fbbx || 1, 1))
   }
 
+  // -------------------------------------------------------------------------
+  // Querying
+
   /**
-   * Same as `.length()`
-   * Returns how many glyphs actually exist in the font.
-   *
-   * @returns Actual glyph count in the font
+   * How many (encoded) glyphs actually exist in the font.
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#length}
    */
@@ -490,84 +1052,64 @@ export class Font {
   /**
    * Similar to `.iterglyphs()`, except it returns an `array` of glyph codepoints instead of an `iterator` of `Glyph` objects.
    *
-   * @param order  - Order
-   * @param r  - Codepoint range
+   * @param order - Order: 1 ascending codepoints (default), 0 file order, 2 descending, -1 reverse file order
+   * @param r - Codepoint range: `n` (cp < n), `[a, b]` or `[[a, b], ...]`
    *
-   * @returns An iterator of the codepoints of glyphs
+   * @returns An array of the codepoints of glyphs
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#itercps}
    */
-  itercps(
-    order?: OrderType | null,
-    r?: number | [number, number] | [number, number][] | null
-  ): number[] {
+  itercps(order?: OrderType | null, r?: CodepointRangeType | null): number[] {
     const _order = order ?? 1
     const _r = r ?? null
     let ret: number[]
     const ks = [...this.glyphs.keys()]
     switch (_order) {
       case 1:
-        ret = ks.sort((a: number, b: number): number => a - b)
+        ret = ks.sort((a, b) => a - b)
         break
       case 0:
         ret = ks
         break
       case 2:
-        ret = ks.sort((a: number, b: number): number => b - a)
+        ret = ks.sort((a, b) => b - a)
         break
       case -1:
         ret = ks.reverse()
         break
+      default:
+        throw new Error(`Unknown order ${String(_order)}`)
     }
-    if (_r !== null) {
-      const f = (cp: number): boolean => {
-        if (typeof _r === 'number') {
-          return cp < _r
-        } else if (
-          Array.isArray(_r) &&
-          _r.length === 2 &&
-          typeof _r[0] === 'number' &&
-          typeof _r[1] === 'number'
-        ) {
-          return cp <= _r[1] && cp >= _r[0]
-        } else {
-          if (Array.isArray(_r) && Array.isArray(_r[0])) {
-            for (const t of _r) {
-              const [t0, t1] = t as [number, number]
-              if (cp <= t1 && cp >= t0) {
-                return true
-              }
-            }
-          }
-          return false
-        }
-      }
-      ret = ret.filter(f)
-    }
-    return ret
+    return _r === null ? ret : ret.filter((cp) => cpInRange(cp, _r))
   }
 
   /**
-   * Returns an iterator of all the glyphs (as `Glyph` objects) in the font (default) or in the specified codepoint range in the font, sorted by the specified order (or by the ascending codepoint order by default).
+   * Returns an iterator of all the glyphs (as attached `Glyph` objects) in the font (default) or in the specified codepoint range in the font, sorted by the specified order (or by the ascending codepoint order by default).
    *
-   * @param order  - Order
-   * @param r  - Codepoint range
+   * @param order - Order
+   * @param r - Codepoint range
    *
-   * @returns An iterator of glyphs as `Glyph` objects. Missing glyphs are replaced by `null`
+   * @returns An iterator of glyphs as `Glyph` objects
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#iterglyphs}
    */
   *iterglyphs(
     order?: OrderType | null,
     r?: CodepointRangeType | null
-  ): IterableIterator<Glyph | null> {
+  ): IterableIterator<Glyph> {
     for (const cp of this.itercps(order, r)) {
-      yield this.glyphbycp(cp)
+      yield this.glyphbycp(cp) as Glyph
     }
   }
 
+  private __glyphfromlist(list: GlyphMetaInFont): Glyph {
+    const g = new Glyph(listToMeta(list), this)
+    g._attach(list)
+    return g
+  }
+
   /**
-   * Get a glyph (as Glyph Object) by its codepoint.
+   * Get a glyph (as attached `Glyph` object) by its codepoint.
    *
    * @param codepoint - Codepoint
    *
@@ -576,21 +1118,13 @@ export class Font {
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#glyphbycp}
    */
   glyphbycp(codepoint: number): Glyph | null {
-    const b = this.glyphs.get(codepoint)
-
-    if (b === undefined || b === null) {
-      return null
-    } else {
-      const d: GlyphMetaTemp = {}
-      META_TITLES.forEach((val, i) => {
-        setProperty(d, val, b[i])
-      })
-      return new Glyph(d as GlyphMeta, this)
-    }
+    const list = this.glyphs.get(codepoint)
+    return list === undefined ? null : this.__glyphfromlist(list)
   }
 
   /**
-   * Get a glyph (as `Glyph` object) by its character.
+   * Get a glyph (as attached `Glyph` object) by its character (converted
+   * with the font's charset, see `char2cp`).
    *
    * @param character - Character
    *
@@ -599,8 +1133,8 @@ export class Font {
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#glyph}
    */
   glyph(character: string): Glyph | null {
-    const ret = this.char2cp(character)
-    return ret === undefined ? null : this.glyphbycp(ret)
+    const cp = this.char2cp(character)
+    return cp === null ? null : this.glyphbycp(cp)
   }
 
   /**
@@ -614,11 +1148,9 @@ export class Font {
    */
   lacksglyphs(str: string): null | string[] {
     const l: string[] = []
-    const len = str.length
-    for (let c, i = 0; i < len; i++) {
-      c = str[i]
+    for (const c of str) {
       const cp = this.char2cp(c)
-      if (cp === undefined || !this.glyphs.has(cp)) {
+      if (cp === null || !this.glyphs.has(cp)) {
         l.push(c)
       }
     }
@@ -639,45 +1171,24 @@ export class Font {
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#drawcps}
    */
-  drawcps(
-    cps: number[],
-    options: {
-      linelimit?: number | null
-      mode?: 0 | 1 | null
-      direction?: DirectionType | null
-      usecurrentglyphspacing?: boolean | null
-      missing?: Glyph | GlyphMeta | null
-    } = {}
-  ): Bitmap {
+  drawcps(cps: number[], options: DrawOptions = {}): Bitmap {
     const _linelimit = options.linelimit ?? 512
     const _mode = options.mode ?? 1
     const _direction = options.direction ?? 'lrtb'
     const _usecurrentglyphspacing = options.usecurrentglyphspacing ?? false
     const _missing = options.missing ?? null
-    if (this.headers === undefined) {
+    if (this.headers.fbbx === undefined) {
       throw new Error('Font is not loaded')
     }
-    let align_glyph: 0 | 1,
-      align_line: 0 | 1 | undefined = undefined,
-      bitmap: Bitmap | undefined = undefined,
-      bitmaplist: Bitmap[],
-      cp: number | undefined = undefined,
-      dire_glyph: DirectionNumberType,
-      dire_line: DirectionNumberType,
-      fbbsize: number | undefined = undefined,
-      glyph: Glyph | undefined = undefined,
-      interglyph: number | undefined | null,
-      interglyph_global: number | undefined | null,
-      interglyph_str: 'dwx0' | 'dwx1' | undefined = undefined,
-      interglyph_str2: 'dwy0' | 'dwy1' | undefined = undefined,
-      offset: number | undefined = undefined,
-      offsetlist: number[],
-      size: number,
-      skip: boolean,
-      w: number | undefined = undefined
+    let interglyph_global: number | null = null
+    let interglyph_str: 'dwx0' | 'dwx1' = 'dwx0'
+    let interglyph_str2: 'dwy0' | 'dwy1' = 'dwy0'
+    let fbbsize = 0
     const dire = DIRE_SHORTCUT_MAP[_direction] ?? _direction
     const dire_glyph_str = dire.slice(0, 2) as DirectionPartType
     const dire_line_str = dire.slice(2, 4) as DirectionPartType
+    let dire_glyph: DirectionNumberType
+    let dire_line: DirectionNumberType
     if (dire_glyph_str in DIRE_MAP && dire_line_str in DIRE_MAP) {
       dire_glyph = DIRE_MAP[dire_glyph_str]
       dire_line = DIRE_MAP[dire_line_str]
@@ -685,20 +1196,8 @@ export class Font {
       dire_glyph = 1
       dire_line = 0
     }
-    if (dire_line === 0 || dire_line === 2) {
-      align_glyph = 1
-    } else {
-      if (dire_line === 1 || dire_line === -1) {
-        align_glyph = 0
-      }
-    }
-    if (dire_glyph === 1 || dire_glyph === -1) {
-      align_line = 1
-    } else {
-      if (dire_glyph === 2 || dire_glyph === 0) {
-        align_line = 0
-      }
-    }
+    const align_glyph: 0 | 1 = dire_line === 0 || dire_line === 2 ? 1 : 0
+    const align_line: 0 | 1 = dire_glyph === 1 || dire_glyph === -1 ? 1 : 0
     if (_mode === 1) {
       fbbsize = dire_glyph > 0 ? this.headers['fbbx'] : this.headers['fbby']
       if (dire_glyph > 0) {
@@ -709,21 +1208,17 @@ export class Font {
         interglyph_str2 = 'dwy1'
       }
       if (interglyph_str in this.headers) {
-        interglyph_global = this.headers[interglyph_str]
-      } else {
-        if (interglyph_str2 in this.headers) {
-          interglyph_global = this.headers[interglyph_str2]
-        } else {
-          interglyph_global = null
-        }
+        interglyph_global = this.headers[interglyph_str] ?? null
+      } else if (interglyph_str2 in this.headers) {
+        interglyph_global = this.headers[interglyph_str2] ?? null
       }
     }
     const list_of_bitmaplist: Bitmap[][] = []
-    bitmaplist = []
+    let bitmaplist: Bitmap[] = []
     const list_of_offsetlist: number[][] = []
-    offsetlist = []
-    size = 0
-    const append_bitmaplist_and_offsetlist = () => {
+    let offsetlist: number[] = []
+    let size = 0
+    const append_bitmaplist_and_offsetlist = (): void => {
       list_of_bitmaplist.push(bitmaplist)
       if (_usecurrentglyphspacing) {
         offsetlist.shift()
@@ -732,82 +1227,53 @@ export class Font {
       }
       list_of_offsetlist.push(offsetlist)
     }
-    const cpsiter = cps[Symbol.iterator]()
-    skip = false
-    while (1) {
-      if (skip) {
-        skip = false
-      } else {
-        cp = cpsiter.next()?.value
-        if (cp === undefined) {
-          break
-        }
-        const glyphTemp = this.glyphbycp(cp)
-        if (glyphTemp !== null) {
-          glyph = glyphTemp
+    for (let i = 0; i < cps.length;) {
+      const cp = cps[i]
+      let glyph = this.glyphbycp(cp)
+      if (glyph === null) {
+        if (_missing) {
+          glyph =
+            _missing instanceof Glyph ? _missing : new Glyph(_missing, this)
         } else {
-          if (_missing) {
-            if (_missing instanceof Glyph) {
-              glyph = _missing
-            } else {
-              glyph = new Glyph(_missing, this)
-            }
-          } else {
-            glyph = new Glyph(EMPTY_GLYPH, this)
-          }
-        }
-        bitmap = glyph.draw()
-        w = bitmap.width()
-        offset = 0
-        if (
-          _mode === 1 &&
-          interglyph_str !== undefined &&
-          interglyph_str2 !== undefined
-        ) {
-          interglyph = glyph.meta[interglyph_str] || glyph.meta[interglyph_str2]
-          if (interglyph === undefined || interglyph === null) {
-            interglyph = interglyph_global
-          }
-          if (
-            interglyph !== undefined &&
-            interglyph !== null &&
-            fbbsize !== undefined
-          ) {
-            offset = interglyph - fbbsize
-          }
+          glyph = new Glyph(EMPTY_GLYPH, this)
         }
       }
-      if (
-        w !== undefined &&
-        offset !== undefined &&
-        bitmap !== undefined &&
-        glyph !== undefined &&
-        cp !== undefined
-      ) {
-        size += w + offset
-        if (size <= _linelimit) {
-          bitmaplist.push(bitmap)
-          offsetlist.push(offset)
-        } else {
-          if (bitmaplist.length === 0) {
-            throw new Error(
-              `\`_linelimit\` (${_linelimit}) is too small the line can't even contain one glyph: "${glyph.chr()}" (codepoint ${cp}, width: ${w})`
-            )
-          }
-          append_bitmaplist_and_offsetlist()
-          size = 0
-          bitmaplist = []
-          offsetlist = []
-          skip = true
+      const bitmap = glyph.draw()
+      const w = bitmap.width()
+      let offset = 0
+      if (_mode === 1) {
+        let interglyph: number | null =
+          glyph.meta[interglyph_str] || glyph.meta[interglyph_str2]
+        if (interglyph === undefined || interglyph === null) {
+          interglyph = interglyph_global
         }
+        if (interglyph !== null) {
+          offset = interglyph - fbbsize
+        }
+      }
+      size += w + offset
+      if (size <= _linelimit) {
+        bitmaplist.push(bitmap)
+        offsetlist.push(offset)
+        i++
+      } else {
+        if (bitmaplist.length === 0) {
+          throw new Error(
+            `\`linelimit\` (${_linelimit}) is too small the line can't even contain one glyph: "${String(glyph.chr())}" (codepoint ${cp}, width: ${w})`
+          )
+        }
+        append_bitmaplist_and_offsetlist()
+        size = 0
+        bitmaplist = []
+        offsetlist = []
       }
     }
     if (bitmaplist.length !== 0) {
       append_bitmaplist_and_offsetlist()
     }
 
-    const list_of_bitmap_line_lists = list_of_bitmaplist.map((bitmaplist, i) =>
-      Bitmap.concatall(bitmaplist, {
+    const list_of_bitmap_line_lists = list_of_bitmaplist.map((bl, i) =>
+      Bitmap.concatall(bl, {
         direction: dire_glyph,
         align: align_glyph,
         offsetlist: list_of_offsetlist[i],
@@ -834,33 +1300,12 @@ export class Font {
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#draw}
    */
-  draw(
-    str: string,
-    options: {
-      linelimit?: number | null
-      mode?: 0 | 1 | null
-      direction?: DirectionType | null
-      usecurrentglyphspacing?: boolean | null
-      missing?: Glyph | GlyphMeta | null
-    } = {}
-  ): Bitmap {
-    const { linelimit, mode, direction, usecurrentglyphspacing, missing } =
-      options
+  draw(str: string, options: DrawOptions = {}): Bitmap {
+    // characters that are not representable map to -1 (never a key of
+    // `glyphs`), so they are drawn as missing glyphs
     return this.drawcps(
-      str.split('').map((c) => {
-        const cp = this.char2cp(c)
-        if (cp === undefined) {
-          return 0 // .notdef glyph at codepoint 0
-        }
-        return cp
-      }),
-      {
-        linelimit,
-        mode,
-        direction,
-        usecurrentglyphspacing,
-        missing,
-      }
+      Array.from(str, (c) => this.char2cp(c) ?? -1),
+      options
     )
   }
 
@@ -890,239 +1335,607 @@ export class Font {
   ): Bitmap {
     const { order, r, linelimit, mode, direction, usecurrentglyphspacing } =
       options
-    const _mode = mode ?? 0
     return this.drawcps(this.itercps(order, r), {
       linelimit,
-      mode: _mode,
+      mode: mode ?? 0,
       direction,
       usecurrentglyphspacing,
     })
   }
 
+  // -------------------------------------------------------------------------
+  // Editing
+
   /**
-   * Add a glyph to the font
+   * @internal Write an attached glyph's meta back into the font (moving it if
+   * its codepoint changed). Detaches the glyph if its slot no longer exists.
+   */
+  _writeback(glyph: Glyph): void {
+    const store = glyph._store
+    if (store === null) {
+      return
+    }
+    const oldcp = store[1]
+    let uidx = -1
+    if (oldcp < 0) {
+      uidx = this.unencoded.findIndex((e) => e.meta === store)
+      if (uidx === -1) {
+        glyph._detach()
+        return
+      }
+    } else if (this.glyphs.get(oldcp) !== store) {
+      glyph._detach()
+      return
+    }
+    const values = metaToList(glyph.meta)
+    for (let i = 0; i < 17; i++) {
+      ;(store as unknown[])[i] = values[i]
+    }
+    const newcp = store[1]
+    if (newcp < 0) {
+      store[1] = -1
+      glyph.meta.codepoint = -1
+    }
+    if (oldcp >= 0 ? newcp !== oldcp : newcp >= 0) {
+      if (oldcp < 0) {
+        this.unencoded.splice(uidx, 1)
+      } else {
+        this.glyphs.delete(oldcp)
+      }
+      if (newcp < 0) {
+        this.unencoded.push({ altcode: null, meta: store })
+      } else {
+        this.glyphs.set(newcp, store)
+      }
+    }
+    this.__codec = null
+  }
+
+  private __defaultname(cp: number): string {
+    return cp >= 0
+      ? defaultglyphname(cp, isUnicodeCharset(this.charset))
+      : `char${cp}`
+  }
+
+  /**
+   * Add a glyph to the font (and attach it: the `Glyph` object now writes its
+   * edits back to this font).
    *
-   * If the glyph's codepoint is taken, it replaces the original glyph
+   * If its codepoint already exists, the existing glyph is replaced (in
+   * place) when `replace` is `true` (default), else kept (with a warning).
+   * Codepoint `-1` appends the glyph to `unencoded`.
    *
-   * @param glyph - Glyph object of the glyph to add
+   * @param glyph - `Glyph` object or meta object
+   * @param replace - Replace an existing glyph with the same codepoint, default `true`
    *
    * @returns The current `Font` object
    *
-   * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#removeglyph}
-   **/
-  addglyph(glyph: Glyph): Font {
-    if (this.glyphs.has(glyph.cp())) {
-      this.glyphs.delete(glyph.cp())
+   * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#addglyph}
+   */
+  addglyph(
+    glyph: Glyph | Partial<GlyphMeta>,
+    replace: boolean | { replace?: boolean } = true
+  ): this {
+    const _replace =
+      typeof replace === 'object' ? (replace.replace ?? true) : replace
+    const isGlyph = glyph instanceof Glyph
+    const meta: Partial<GlyphMeta> = isGlyph ? glyph.meta : glyph
+    for (const k of Object.keys(meta)) {
+      if (!(META_TITLES as readonly string[]).includes(k)) {
+        throw new Error(`Unknown glyph meta key "${k}"`)
+      }
     }
-    this.glyphs.set(glyph.cp(), Object.values(glyph.meta) as GlyphMetaInFont)
+    const cp = meta.codepoint
+    if (typeof cp !== 'number' || !Number.isInteger(cp)) {
+      throw new Error('The glyph has no codepoint')
+    }
+    const list = metaToList({
+      glyphname: meta.glyphname ?? this.__defaultname(cp),
+      codepoint: cp < 0 ? -1 : cp,
+      bbw: meta.bbw ?? 0,
+      bbh: meta.bbh ?? 0,
+      bbxoff: meta.bbxoff ?? 0,
+      bbyoff: meta.bbyoff ?? 0,
+      swx0: meta.swx0 ?? null,
+      swy0: meta.swy0 ?? null,
+      dwx0: meta.dwx0 ?? null,
+      dwy0: meta.dwy0 ?? null,
+      swx1: meta.swx1 ?? null,
+      swy1: meta.swy1 ?? null,
+      dwx1: meta.dwx1 ?? null,
+      dwy1: meta.dwy1 ?? null,
+      vvectorx: meta.vvectorx ?? null,
+      vvectory: meta.vvectory ?? null,
+      hexdata: [...(meta.hexdata ?? [])],
+    })
+    if (cp < 0) {
+      this.unencoded.push({ altcode: null, meta: list })
+    } else {
+      if (this.glyphs.has(cp) && !_replace) {
+        warn(`Glyph with codepoint ${cp} already exists, not replaced`)
+        return this
+      }
+      this.glyphs.set(cp, list)
+    }
+    if (isGlyph) {
+      glyph.font = this
+      glyph.meta = listToMeta(list)
+      glyph._attach(list)
+    }
+    this.__codec = null
     return this
   }
 
   /**
-   * Remove a glyph from the font
+   * Remove a glyph from the font (no-op if missing). A `Glyph` object attached
+   * to this font is removed from its slot (works for unencoded glyphs too)
+   * and detached.
    *
-   * @param cpOrGlyph - Codepoint or Glyph object of the glyph to remove
+   * @param cpOrGlyph - Codepoint or `Glyph` object of the glyph to remove
    *
    * @returns The current `Font` object
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#removeglyph}
-   **/
-  removeglyph(cpOrGlyph: number | Glyph): Font {
-    const codepoint = typeof cpOrGlyph === 'number' ? cpOrGlyph : cpOrGlyph.cp()
-    if (this.glyphs.has(codepoint)) {
-      this.glyphs.delete(codepoint)
+   */
+  removeglyph(cpOrGlyph: number | Glyph): this {
+    if (typeof cpOrGlyph === 'number') {
+      this.glyphs.delete(cpOrGlyph)
+    } else {
+      const store = cpOrGlyph._store
+      if (store !== null && cpOrGlyph.font === this) {
+        if (store[1] < 0) {
+          const i = this.unencoded.findIndex((e) => e.meta === store)
+          if (i !== -1) {
+            this.unencoded.splice(i, 1)
+          }
+        } else if (this.glyphs.get(store[1]) === store) {
+          this.glyphs.delete(store[1])
+        }
+      } else if (cpOrGlyph.cp() >= 0) {
+        this.glyphs.delete(cpOrGlyph.cp())
+      }
+      cpOrGlyph._detach()
+    }
+    this.__codec = null
+    return this
+  }
+
+  /**
+   * Create a new glyph in the font (replacing any existing glyph with the same
+   * codepoint) and return it (attached).
+   *
+   * Without bitmap: empty glyph (`BBX 0 0 0 0`) with `DWIDTH` = `dwidth` or
+   * the font bounding box width. With bitmap: `DWIDTH` = `dwidth` or the
+   * bitmap width, then `setbitmap(bitmap, mode)`. `SWIDTH` is computed with
+   * `swidth()`.
+   *
+   * @param cp - Codepoint (`-1` for an unencoded glyph)
+   * @param bitmap - Bitmap, or an options object `{bitmap, mode, name, dwidth}`
+   * @param options - see {@link NewglyphOptions}
+   *
+   * @returns The new `Glyph` object
+   *
+   * @example
+   * font.newglyph(0x41, Bitmap.fromstring('.#.\n#.#\n###\n#.#'), { mode: 1, dwidth: 4 })
+   */
+  newglyph(
+    cp: number,
+    bitmap?: Bitmap | NewglyphOptions | null,
+    options: NewglyphOptions = {}
+  ): Glyph {
+    let opts: NewglyphOptions
+    if (bitmap instanceof Bitmap || bitmap === null || bitmap === undefined) {
+      opts = { ...options, bitmap: bitmap ?? options.bitmap ?? null }
+    } else {
+      opts = { ...bitmap, ...options }
+    }
+    const bm = opts.bitmap ?? null
+    const name = opts.name ?? this.__defaultname(cp)
+    const dwx0 =
+      opts.dwidth ?? (bm !== null ? bm.width() : (this.headers.fbbx ?? 0))
+    const meta: GlyphMeta = {
+      glyphname: name,
+      codepoint: cp < 0 ? -1 : cp,
+      bbw: 0,
+      bbh: 0,
+      bbxoff: 0,
+      bbyoff: 0,
+      swx0: this.swidth(dwx0),
+      swy0: 0,
+      dwx0,
+      dwy0: 0,
+      swx1: null,
+      swy1: null,
+      dwx1: null,
+      dwy1: null,
+      vvectorx: null,
+      vvectory: null,
+      hexdata: [],
+    }
+    const g = new Glyph(meta, this)
+    this.addglyph(g)
+    if (bm !== null) {
+      g.setbitmap(bm, opts.mode ?? 0)
+    }
+    return g
+  }
+
+  /**
+   * Recompute FONTBOUNDINGBOX as the union of all glyph boxes (encoded and
+   * unencoded glyphs with `bbw > 0` and `bbh > 0`). Unchanged if there are
+   * none.
+   *
+   * @returns The current `Font` object
+   */
+  updatebbox(): this {
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    const lists = [
+      ...this.glyphs.values(),
+      ...this.unencoded.map((u) => u.meta),
+    ]
+    for (const l of lists) {
+      const [bbw, bbh, bbxoff, bbyoff] = [l[2], l[3], l[4], l[5]]
+      if (bbw > 0 && bbh > 0) {
+        x0 = Math.min(x0, bbxoff)
+        y0 = Math.min(y0, bbyoff)
+        x1 = Math.max(x1, bbxoff + bbw)
+        y1 = Math.max(y1, bbyoff + bbh)
+      }
+    }
+    if (x0 !== Infinity) {
+      this.headers.fbbx = x1 - x0
+      this.headers.fbby = y1 - y0
+      this.headers.fbbxoff = x0
+      this.headers.fbbyoff = y0
+    }
+    return this
+  }
+
+  private __copyinto(font: Font, withGlyphs: boolean): Font {
+    const headers = { ...this.headers }
+    if (Array.isArray(headers.comment)) {
+      headers.comment = [...headers.comment]
+    }
+    font.headers = headers
+    const props: Props = { ...this.props }
+    if (Array.isArray(props.comment)) {
+      props.comment = [...props.comment]
+    }
+    font.props = props
+    font._propnames = new Map(this._propnames)
+    font.__iconv = this.__iconv
+    font.__charset = this.__charset
+    font.__char2cp = this.__char2cp
+    font.__cp2char = this.__cp2char
+    if (withGlyphs) {
+      for (const [cp, list] of this.glyphs) {
+        font.glyphs.set(cp, cloneList(list))
+      }
+      font.unencoded = this.unencoded.map((u) => ({
+        altcode: u.altcode,
+        meta: cloneList(u.meta),
+      }))
+    }
+    return font
+  }
+
+  /**
+   * Deep copy of the font (headers, properties, glyphs, unencoded glyphs,
+   * encoding options).
+   *
+   * @returns New `Font` object
+   */
+  clone(): Font {
+    return this.__copyinto(new Font(), true)
+  }
+
+  /**
+   * New font (deep copy) keeping only the glyphs whose codepoint passes the
+   * range filter `r` (same as `itercps`); unencoded glyphs are dropped.
+   *
+   * @param r - Codepoint range: `n` (cp < n), `[a, b]` or `[[a, b], ...]`
+   *
+   * @returns New `Font` object
+   *
+   * @example
+   * const ascii = font.subset([0x20, 0x7e])
+   */
+  subset(r: CodepointRangeType | null): Font {
+    const font = this.__copyinto(new Font(), false)
+    for (const [cp, list] of this.glyphs) {
+      if (cpInRange(cp, r)) {
+        font.glyphs.set(cp, cloneList(list))
+      }
+    }
+    return font
+  }
+
+  /**
+   * Copy (deep) the (encoded) glyphs of another font into this one; existing
+   * codepoints are kept unless `replace`.
+   *
+   * @param other - Other font
+   * @param replace - Replace existing glyphs, default `false`
+   *
+   * @returns The current `Font` object
+   */
+  merge(other: Font, replace = false): this {
+    for (const [cp, list] of other.glyphs) {
+      if (replace || !this.glyphs.has(cp)) {
+        this.glyphs.set(cp, cloneList(list))
+      }
+    }
+    this.__codec = null
+    return this
+  }
+
+  /**
+   * Transform glyph bitmaps: `glyph.transform(fn, mode)` for every glyph
+   * passing the range filter `r` (all glyphs, including unencoded ones, if
+   * `r` is not given).
+   *
+   * @param fn - Bitmap transformation, e.g. `(b) => b.bold()`
+   * @param r - Codepoint range
+   * @param mode - Draw / placement mode, default 0
+   *
+   * @returns The current `Font` object
+   *
+   * @example
+   * font.transform((b) => b.italic(), [0x41, 0x5a])
+   */
+  transform(
+    fn: (bitmap: Bitmap) => Bitmap | null | undefined | void,
+    r: CodepointRangeType | null = null,
+    mode: GlyphDrawModeType = 0
+  ): this {
+    for (const cp of this.itercps(0, r)) {
+      this.__glyphfromlist(this.glyphs.get(cp) as GlyphMetaInFont).transform(
+        fn,
+        mode
+      )
+    }
+    if (r === null) {
+      for (const u of [...this.unencoded]) {
+        this.__glyphfromlist(u.meta).transform(fn, mode)
+      }
     }
     return this
   }
 
   /**
-   * Change to another charset for the font
+   * Re-encode every glyph codepoint from the current charset to `newcharset`
+   * (glyphs not representable in the new charset are dropped, with one
+   * summary warning), set the `CHARSET_REGISTRY` / `CHARSET_ENCODING`
+   * properties accordingly (94×94 sets use the X11 GL form, encoding `"0"`)
+   * and clear any `encoding()` override (except `iconv`).
    *
-   * Change to another charset, rewrite `CHARSET_REGISTRY` and `CHARSET_ENCODING` properties, use the new charset to rewrite codepoints (`ENCODING`) of each glyph
-   *
-   * Pass iconv instance, or define customized character and codepoint conversion methods with `.encoding()`, so a non-Unicode encoding can be used
-   *
-   * @param newCharset - New charset
+   * @param newcharset - New charset name, e.g. `'gb2312'`, `'iso8859-2'`, `'big5'`, `'iso10646'`
    *
    * @returns The current `Font` object
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#charsetconvert}
-   **/
-  charsetconvert(newCharset: string): Font {
-    newCharset = sanitizeCharsetName(newCharset)
-    if (newCharset === sanitizeCharsetName(this.charset)) {
-      return this
+   */
+  charsetconvert(newcharset: string): this {
+    const key = canonicalCharset(newcharset)
+    const [registry, enc] = charsetProps(key)
+    const codec = getCodec(key, { iconv: this.__iconv, gl: true })
+    if (!codec.known) {
+      warn(
+        `Unknown charset '${key}', characters are mapped to codepoints as Unicode`
+      )
     }
     const newGlyphs: Map<number, GlyphMetaInFont> = new Map()
-    for (const [, metaInFont] of this.glyphs) {
-      const newCp =
-        char2cp(this.cp2char(metaInFont[1]), newCharset, this.__iconv) ??
-        metaInFont[1]
-      metaInFont[1] = newCp
-      newGlyphs.set(newCp, metaInFont)
+    let dropped = 0
+    for (const [cp, list] of this.glyphs) {
+      const ch = this.cp2char(cp)
+      const ncp = ch === null ? null : codec.char2cp(ch)
+      if (ncp === null) {
+        dropped++
+        continue
+      }
+      if (newGlyphs.has(ncp)) {
+        // two glyphs map to the same codepoint: the later one wins
+        dropped++
+        newGlyphs.delete(ncp)
+      }
+      list[1] = ncp
+      newGlyphs.set(ncp, list)
+    }
+    if (dropped > 0) {
+      warn(
+        `${dropped} glyph(s) could not be converted to the charset '${key}' and were dropped`
+      )
     }
     this.glyphs = newGlyphs
-    this.charset = newCharset
-    this.props.charset_registry = newCharset
-    this.props.charset_encoding = '0'
+    this.__charset = null
+    this.__char2cp = null
+    this.__cp2char = null
+    this.setprop('CHARSET_REGISTRY', registry)
+    this.setprop('CHARSET_ENCODING', enc)
     return this
   }
 
+  // -------------------------------------------------------------------------
+  // Output
+
   /**
-   * Convert the font to a multiline string that can be saved as a BDF file
+   * Convert the font to BDF text (SPEC-v3 §5). Reproduces FontForge-written
+   * files byte for byte.
    *
-   * @returns BDF string
+   * @returns BDF string (ends with `ENDFONT\n`)
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#tobdf}
    **/
   tobdf(): string {
-    if (!this.headers) {
-      throw new Error('Font is not loaded')
-    }
-
-    const lines: string[] = []
-
-    lines.push(`STARTFONT ${this.headers.bdfversion}`)
-    lines.push(`FONT ${this.headers.fontname}`)
-    lines.push(
-      `SIZE ${this.headers.pointsize} ${this.headers.xres} ${this.headers.yres}`
+    const h = this.headers
+    const missing = REQUIRED_HEADERS.filter(
+      (k) => h[k] === undefined || h[k] === null
     )
-    lines.push(
-      `FONTBOUNDINGBOX ${this.headers.fbbx} ${this.headers.fbby} ${this.headers.fbbxoff} ${this.headers.fbbyoff}`
-    )
-
-    if (this.headers.comment) {
-      this.headers.comment.forEach((comment) => {
-        lines.push(`COMMENT "${comment}"`)
-      })
-    }
-
-    lines.push(`STARTPROPERTIES ${Object.keys(this.props).length}`)
-    for (const [key, value] of Object.entries(this.props)) {
-      if (value === null) {
-        lines.push(key.toUpperCase())
-      } else {
-        const shouldQuote = !NO_QUOTE_PROPS.includes(key.toUpperCase())
-        lines.push(
-          `${key.toUpperCase()} ${
-            shouldQuote && typeof value === 'string' ? `"${value}"` : value
-          }`
-        )
-      }
-    }
-    lines.push('ENDPROPERTIES')
-
-    lines.push(`CHARS ${this.glyphs.size}`)
-
-    for (const [cp, glyphMeta] of this.glyphs) {
-      lines.push(`STARTCHAR ${glyphMeta[0]}`)
-      lines.push(`ENCODING ${cp}`)
-
-      if (glyphMeta[6] !== null && glyphMeta[7] !== null) {
-        lines.push(`SWIDTH ${glyphMeta[6]} ${glyphMeta[7]}`)
-      }
-      if (glyphMeta[8] !== null && glyphMeta[9] !== null) {
-        lines.push(`DWIDTH ${glyphMeta[8]} ${glyphMeta[9]}`)
-      }
-      if (glyphMeta[10] !== null && glyphMeta[11] !== null) {
-        lines.push(`SWIDTH1 ${glyphMeta[10]} ${glyphMeta[11]}`)
-      }
-      if (glyphMeta[12] !== null && glyphMeta[13] !== null) {
-        lines.push(`DWIDTH1 ${glyphMeta[12]} ${glyphMeta[13]}`)
-      }
-      if (glyphMeta[14] !== null && glyphMeta[15] !== null) {
-        lines.push(`VVECTOR ${glyphMeta[14]} ${glyphMeta[15]}`)
-      }
-
-      lines.push(
-        `BBX ${glyphMeta[2]} ${glyphMeta[3]} ${glyphMeta[4]} ${glyphMeta[5]}`
+    if (missing.length > 0) {
+      throw new Error(
+        `Cannot write BDF: missing header(s) ${missing.join(', ')} (font not loaded?)`
       )
+    }
+    const lines: string[] = []
+    const both = (kw: string, a: unknown, b: unknown): void => {
+      if (a !== null && a !== undefined && b !== null && b !== undefined) {
+        lines.push(`${kw} ${String(a)} ${String(b)}`)
+      }
+    }
+    lines.push(`STARTFONT ${fmtver(h.bdfversion ?? 2.1)}`)
+    lines.push(`FONT ${h.fontname ?? ''}`)
+    lines.push(`SIZE ${h.pointsize} ${h.xres} ${h.yres}`)
+    lines.push(`FONTBOUNDINGBOX ${h.fbbx} ${h.fbby} ${h.fbbxoff} ${h.fbbyoff}`)
+    if (
+      h.metricsset !== undefined &&
+      h.metricsset !== null &&
+      h.metricsset !== 0
+    ) {
+      lines.push(`METRICSSET ${h.metricsset}`)
+    }
+    if (h.contentversion !== undefined && h.contentversion !== null) {
+      lines.push(`CONTENTVERSION ${h.contentversion}`)
+    }
+    both('SWIDTH', h.swx0, h.swy0)
+    both('DWIDTH', h.dwx0, h.dwy0)
+    both('SWIDTH1', h.swx1, h.swy1)
+    both('DWIDTH1', h.dwx1, h.dwy1)
+    both('VVECTOR', h.vvectorx, h.vvectory)
+    for (const c of h.comment ?? []) {
+      lines.push(`COMMENT "${c}"`)
+    }
 
+    const propkeys = Object.keys(this.props).filter((k) => k !== 'comment')
+    const propcomments = Array.isArray(this.props.comment)
+      ? this.props.comment
+      : []
+    if (propkeys.length > 0 || propcomments.length > 0) {
+      lines.push(`STARTPROPERTIES ${propkeys.length}`)
+      for (const c of propcomments) {
+        lines.push(`COMMENT "${c}"`)
+      }
+      for (const k of propkeys) {
+        const name = this._propnames.get(k) ?? k.toUpperCase()
+        const v = this.props[k]
+        if (v === null || v === undefined) {
+          lines.push(name)
+        } else if (typeof v === 'number') {
+          lines.push(`${name} ${fmtnum(v)}`)
+        } else {
+          lines.push(`${name} "${String(v).replace(/"/g, '""')}"`)
+        }
+      }
+      lines.push('ENDPROPERTIES')
+    }
+
+    lines.push(`CHARS ${this.glyphs.size + this.unencoded.length}`)
+    const glyph = (g: GlyphMetaInFont, encoding: string): void => {
+      lines.push(`STARTCHAR ${g[0]}`)
+      lines.push(`ENCODING ${encoding}`)
+      both('SWIDTH', g[6], g[7])
+      both('DWIDTH', g[8], g[9])
+      both('SWIDTH1', g[10], g[11])
+      both('DWIDTH1', g[12], g[13])
+      both('VVECTOR', g[14], g[15])
+      lines.push(`BBX ${g[2]} ${g[3]} ${g[4]} ${g[5]}`)
       lines.push('BITMAP')
-      lines.push(...glyphMeta[16])
+      for (const row of g[16]) {
+        lines.push(row)
+      }
       lines.push('ENDCHAR')
     }
-
+    for (const [cp, g] of this.glyphs) {
+      glyph(g, String(cp))
+    }
+    for (const u of this.unencoded) {
+      glyph(u.meta, u.altcode === null ? '-1' : `-1 ${u.altcode}`)
+    }
     lines.push('ENDFONT')
-    return lines.join('\n')
+    return lines.join('\n') + '\n'
+  }
+
+  /**
+   * Convert the font to PCF (SPEC-v3 §6), byte-identical to `bdftopcf` with
+   * default options.
+   *
+   * @param options - PCF writer options (`byteorder`, `bitorder`, `glyphpad`, `scanunit`)
+   *
+   * @returns PCF file content
+   */
+  topcf(options?: Parameters<typeof writePcf>[1]): Uint8Array {
+    return writePcf(this, options)
+  }
+
+  /**
+   * Convert the font to a pixel TrueType font (SPEC-v3 §8), with square or
+   * round dots.
+   *
+   * @param options - TTF writer options (`shape`, `dotsize`, `ppu`, `metadata`, `timestamp`)
+   *
+   * @returns TTF file content
+   */
+  tottf(options?: Parameters<typeof writeTtf>[1]): Uint8Array {
+    return writeTtf(this, options)
   }
 
   /**
    * Convert the BDF font to SVG font string
    *
-   * @param options - Options for SVG font
-   * @param options.pathOffsets.x - Offsets (to the right (x) top (y)) to apply to all glyphs' SVG paths, default to `{ x: 0, y: 0 }`
-   * @param options.pathOffsets.y - See above
-   * @param options.unicodeAttr.controlCharNoSkip - no `unicode` attribute for `<glyph>` of control character (only U+0000-U+000F), default to `false`
-   * - `false` is compatible with FontForge which can't load SVG font with control character `<glyph>` having `unicode` attribute
-   * - `true` is compatible with `svg2ttf` JavaScript library which skips control character `<glyph>` without `unicode` attribute
-   * @param options.unicodeAttr.format - Format of the `unicode` attribute for `<glyph>`, default to `'hexncr'`
-   * - `'hexncr'`: hex NCR, e.g. `unicode="&#x4ab;"`
-   * - `'decncr'`: decimal NCR, e.g. `unicode="&#1195;"`
-   * - `'char'`: character itself (with XML escape for a few characters), e.g. `unicode="a"`, `unicode="&amp;"`, `unicode="的"`
+   * @param options - see {@link SvgFontOptions}
    *
    * @returns SVG font string
    *
    * @see online docs: {@link https://font.tomchen.org/bdfparser_js/font#tosvgfont}
    */
-  tosvgfont(
-    options: {
-      pathOffsets?: { x?: number; y?: number }
-      unicodeAttr?: {
-        controlCharNoSkip?: boolean
-        format?: 'hexncr' | 'decncr' | 'char'
-      }
-    } = {}
-  ): string {
+  tosvgfont(options: SvgFontOptions = {}): string {
     const xPathOffset = options.pathOffsets?.x ?? 0
     const yPathOffset = options.pathOffsets?.y ?? 0
     const unicodeAttrControlCharNoSkip =
       options.unicodeAttr?.controlCharNoSkip ?? false
     const unicodeAttrFormat = options.unicodeAttr?.format ?? 'hexncr'
-    const toXmlValue = (value: string | number) =>
-      value.toString().replace(
-        /[<>&"']/g,
-        (char) =>
-          ({
-            '<': '&lt;',
-            '>': '&gt;',
-            '&': '&amp;',
-            '"': '&quot;',
-            "'": '&apos;',
-          }[char as '<' | '>' | '&' | '"' | "'"])
-      )
+    const XML_ESC: Record<string, string> = {
+      '<': '&lt;',
+      '>': '&gt;',
+      '&': '&amp;',
+      '"': '&quot;',
+      "'": '&apos;',
+    }
+    const toXmlValue = (value: string | number): string =>
+      String(value).replace(/[<>&"']/g, (char) => XML_ESC[char])
+    const intprop = (v: unknown): number => {
+      const n = parseInt(String(v ?? '0'), 10)
+      return Number.isNaN(n) ? 0 : n
+    }
+    const props = this.props
+    const headers = this.headers
 
-    const unitsPerEm =
-      Math.max(this.headers?.fbbx ?? 0, this.headers?.fbby ?? 0) || 100
-    const fontAscent =
-      parseInt(this.props.font_ascent?.toString() ?? '0', 10) ||
-      unitsPerEm * 0.8
-    const fontDescent =
-      parseInt(this.props.font_descent?.toString() ?? '0', 10) ||
-      -unitsPerEm * 0.2
+    const unitsPerEm = Math.max(headers.fbbx ?? 0, headers.fbby ?? 0) || 100
+    const fontAscent = intprop(props.font_ascent) || unitsPerEm * 0.8
+    const fontDescent = intprop(props.font_descent) || -unitsPerEm * 0.2
 
     let svg = '<svg xmlns="http://www.w3.org/2000/svg" version="1.1">\n'
 
-    const metadataLines = []
-    if (this.props.family_name || this.props.family) {
-      metadataLines.push(
-        `Title: ${this.props.family_name || this.props.family}`
-      )
+    const metadataLines: string[] = []
+    if (props.family_name || props.family) {
+      metadataLines.push(`Title: ${String(props.family_name || props.family)}`)
     }
-    if (this.props.creator) {
-      metadataLines.push(`Weight: ${this.props.weight_name}`)
+    if (props.weight_name) {
+      metadataLines.push(`Weight: ${String(props.weight_name)}`)
     }
-    if (this.props.creator) {
-      metadataLines.push(`Version: ${this.props.font_version}`)
+    if (props.font_version) {
+      metadataLines.push(`Version: ${String(props.font_version)}`)
     }
-    if (this.props.creator) {
-      metadataLines.push(`Founfry: ${this.props.foundry}`)
+    if (props.foundry) {
+      metadataLines.push(`Foundry: ${String(props.foundry)}`)
     }
-    if (this.props.copyright) {
-      metadataLines.push(`Copyright: ${this.props.copyright}`)
+    if (props.copyright) {
+      metadataLines.push(`Copyright: ${String(props.copyright)}`)
     }
-    if (this.props.notice) {
-      metadataLines.push(`Notice: ${this.props.notice}`)
+    if (props.notice) {
+      metadataLines.push(`Notice: ${String(props.notice)}`)
     }
     if (metadataLines.length > 0) {
       svg +=
@@ -1131,124 +1944,101 @@ export class Font {
         '\n</metadata>\n'
     }
 
-    // Calculate unicode range from all glyphs
-    const unicodePoints = [...this.glyphs.keys()].sort((a, b) => a - b)
+    // unicode range from all glyphs
+    const hex4 = (n: number): string =>
+      n.toString(16).toUpperCase().padStart(4, '0')
+    const cps = [...this.glyphs.keys()].sort((a, b) => a - b)
     const ranges: string[] = []
-    let rangeStart = unicodePoints[0]
-    let prev = rangeStart
-    for (let i = 1; i <= unicodePoints.length; i++) {
-      const current = unicodePoints[i]
-      if (current !== prev + 1) {
-        const rangeEnd = prev
-        ranges.push(
-          rangeStart === rangeEnd
-            ? `U+${rangeStart.toString(16).toUpperCase().padStart(4, '0')}`
-            : `U+${rangeStart
-                .toString(16)
-                .toUpperCase()
-                .padStart(4, '0')}-${rangeEnd
-                .toString(16)
-                .toUpperCase()
-                .padStart(4, '0')}`
-        )
-        rangeStart = current
+    if (cps.length > 0) {
+      let rangeStart = cps[0]
+      let prev = rangeStart
+      for (let i = 1; i <= cps.length; i++) {
+        const current = cps[i]
+        if (current !== prev + 1) {
+          ranges.push(
+            rangeStart === prev
+              ? `U+${hex4(rangeStart)}`
+              : `U+${hex4(rangeStart)}-${hex4(prev)}`
+          )
+          rangeStart = current
+        }
+        prev = current
       }
-      prev = current
     }
 
+    const defaultAdv = headers.dwx0 || unitsPerEm
     svg += `<defs>
   <font id="${toXmlValue(
-    (this.headers?.fontname || '').replace(/^-/, '').toLowerCase()
-  )}" horiz-adv-x="${this.headers?.dwx0 || unitsPerEm}">`
+    (headers.fontname || '').replace(/^-/, '').toLowerCase()
+  )}" horiz-adv-x="${defaultAdv}">`
 
-    const fontFaceAttributes = {
-      'font-family':
-        this.props.family_name ||
-        this.props.family ||
-        this.headers?.fontname ||
-        '',
-      'font-weight': this.props.weight_name || 'normal',
-      'font-style': this.props.slant || 'normal',
+    const fontFaceAttributes: Record<string, string | number> = {
+      'font-family': String(
+        props.family_name || props.family || headers.fontname || ''
+      ),
+      'font-weight': String(props.weight_name || 'normal'),
+      'font-style': String(props.slant || 'normal'),
       'units-per-em': unitsPerEm,
-      'cap-height':
-        parseInt(this.props.cap_height?.toString() ?? '0', 10) || fontAscent,
-      'x-height':
-        parseInt(this.props.x_height?.toString() ?? '0', 10) ||
-        fontAscent * 0.5,
+      'cap-height': intprop(props.cap_height) || fontAscent,
+      'x-height': intprop(props.x_height) || fontAscent * 0.5,
       ascent: fontAscent,
       descent: fontDescent,
-      bbox: `${this.headers?.fbbxoff || 0} ${this.headers?.fbbyoff || 0} ${
-        this.headers?.fbbx || unitsPerEm
-      } ${this.headers?.fbby || unitsPerEm}`,
+      bbox: `${headers.fbbxoff || 0} ${headers.fbbyoff || 0} ${
+        headers.fbbx || unitsPerEm
+      } ${headers.fbby || unitsPerEm}`,
       'underline-thickness':
-        parseInt(this.props.underline_thickness?.toString() ?? '0', 10) ||
-        Math.round(unitsPerEm * 0.05),
+        intprop(props.underline_thickness) || rnd(unitsPerEm * 0.05),
       'underline-position':
-        parseInt(this.props.underline_position?.toString() ?? '0', 10) ||
-        Math.round(-unitsPerEm * 0.075),
+        intprop(props.underline_position) || rnd(-unitsPerEm * 0.075),
       'unicode-range': ranges.join(', '),
     }
 
     svg += '\n<font-face\n'
     for (const [key, value] of Object.entries(fontFaceAttributes)) {
-      if (value != null) {
-        svg += `  ${key}="${toXmlValue(value)}"\n`
-      }
+      svg += `  ${key}="${toXmlValue(value)}"\n`
     }
     svg += '></font-face>\n'
 
-    svg += `<missing-glyph horiz-adv-x="${
-      this.headers?.dwx0 || unitsPerEm
-    }" d="M0,0h${unitsPerEm}v${unitsPerEm}h-${unitsPerEm}z" />\n<glyph glyph-name=".notdef" horiz-adv-x="${
-      this.headers?.dwx0 || unitsPerEm
-    }" d="M0,0h${unitsPerEm}v${unitsPerEm}h-${unitsPerEm}z" />\n`
+    const notdef = `M0,0h${unitsPerEm}v${unitsPerEm}h-${unitsPerEm}z`
+    svg += `<missing-glyph horiz-adv-x="${defaultAdv}" d="${notdef}" />\n<glyph glyph-name=".notdef" horiz-adv-x="${defaultAdv}" d="${notdef}" />\n`
 
     for (const glyph of this.iterglyphs()) {
-      if (glyph) {
-        const glyphPath = glyph.draw().tosvg(1, 'pathOnly', true, {
-          x: xPathOffset,
-          y: yPathOffset,
-        })
-        if (!glyphPath) {
-          continue
-        }
-
-        const glyphAttributes: Record<string, string | number> = {
-          'glyph-name': glyph.meta.glyphname,
-          ...(unicodeAttrControlCharNoSkip || glyph.meta.codepoint >= 32
-            ? {
-                unicode:
-                  unicodeAttrFormat === 'decncr'
-                    ? `&#${glyph.meta.codepoint};`
-                    : unicodeAttrFormat === 'char'
-                    ? toXmlValue(String.fromCodePoint(glyph.meta.codepoint))
-                    : `&#x${glyph.meta.codepoint.toString(16)};`,
-              }
-            : {}),
-          'horiz-adv-x': glyph.meta.dwx0 || this.headers?.dwx0 || unitsPerEm,
-          d: glyphPath,
-        }
-
-        if (glyph.meta.swy0) {
-          glyphAttributes['vert-adv-y'] = glyph.meta.swy0
-        }
-        if (glyph.meta.vvectorx) {
-          glyphAttributes['vert-origin-x'] = glyph.meta.vvectorx
-        }
-        if (glyph.meta.vvectory) {
-          glyphAttributes['vert-origin-y'] = glyph.meta.vvectory
-        }
-
-        svg += '<glyph\n'
-        for (const [key, value] of Object.entries(glyphAttributes)) {
-          if (value != null) {
-            svg += `  ${key}="${
-              key === 'unicode' ? value : toXmlValue(value)
-            }"\n`
-          }
-        }
-        svg += '></glyph>\n'
+      const glyphPath = glyph.draw().tosvg(1, 'pathOnly', true, {
+        x: xPathOffset,
+        y: yPathOffset,
+      })
+      if (!glyphPath) {
+        continue
       }
+      const cp = glyph.meta.codepoint
+      const glyphAttributes: Record<string, string | number> = {
+        'glyph-name': glyph.meta.glyphname,
+      }
+      if (unicodeAttrControlCharNoSkip || cp >= 32) {
+        glyphAttributes.unicode =
+          unicodeAttrFormat === 'decncr'
+            ? `&#${cp};`
+            : unicodeAttrFormat === 'char'
+              ? toXmlValue(String.fromCodePoint(cp))
+              : `&#x${cp.toString(16)};`
+      }
+      glyphAttributes['horiz-adv-x'] = glyph.meta.dwx0 || defaultAdv
+      glyphAttributes.d = glyphPath
+      if (glyph.meta.swy0) {
+        glyphAttributes['vert-adv-y'] = glyph.meta.swy0
+      }
+      if (glyph.meta.vvectorx) {
+        glyphAttributes['vert-origin-x'] = glyph.meta.vvectorx
+      }
+      if (glyph.meta.vvectory) {
+        glyphAttributes['vert-origin-y'] = glyph.meta.vvectory
+      }
+
+      svg += '<glyph\n'
+      for (const [key, value] of Object.entries(glyphAttributes)) {
+        svg += `  ${key}="${key === 'unicode' ? value : toXmlValue(value)}"\n`
+      }
+      svg += '></glyph>\n'
     }
 
     svg += '</font>\n</defs>\n</svg>'

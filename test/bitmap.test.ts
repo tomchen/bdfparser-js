@@ -4,15 +4,15 @@ import { specfont_path, bitmap_qr2_bindata, bitmap_qr3_bindata } from './info'
 import iconv from 'iconv-lite'
 
 describe('Bitmap', () => {
-  let font
-  let bitmap_qr
-  let bitmap_qr2
+  let font: Font
+  let bitmap_qr: Bitmap
+  let bitmap_qr2: Bitmap
 
   beforeEach(async () => {
     font = new Font()
     await font.encoding({ iconv }).load_filelines(readlineiter(specfont_path))
 
-    bitmap_qr = font.glyph("'").draw(2)
+    bitmap_qr = font.glyph("'")!.draw(2)
     bitmap_qr2 = new Bitmap(bitmap_qr2_bindata)
     return
   })
@@ -112,9 +112,9 @@ describe('Bitmap', () => {
   })
 
   describe('concat', () => {
-    let bitmap_j
+    let bitmap_j: Bitmap
     beforeEach(() => {
-      bitmap_j = font.glyph('j').draw(2)
+      bitmap_j = font.glyph('j')!.draw(2)
     })
 
     test('concatall_onlyone', () => {
@@ -539,7 +539,7 @@ describe('Bitmap', () => {
   })
 
   describe('pad', () => {
-    let bitmap_qr3
+    let bitmap_qr3: Bitmap
 
     beforeEach(() => {
       bitmap_qr3 = new Bitmap(bitmap_qr3_bindata)
@@ -641,15 +641,15 @@ describe('Bitmap', () => {
   })
 
   describe('tosvg', () => {
-    let bitmap_j
+    let bitmap_j: Bitmap
 
     beforeEach(() => {
-      bitmap_j = font.glyph('j').draw(2)
+      bitmap_j = font.glyph('j')!.draw(2)
     })
 
     test('defaults', () => {
       expect(bitmap_j.tosvg()).toEqual(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="22"><path d="M6,0 L9,0 L9,4 L6,4 Z M5,5 L8,5 L8,9 L5,9 Z M4,9 L7,9 L7,14 L4,14 Z M3,14 L6,14 L6,18 L3,18 Z M2,18 L3,18 L3,22 L2,22 Z M4,18 L6,18 L6,19 L4,19 Z M1,19 L2,19 L2,22 L1,22 Z M3,19 L5,19 L5,20 L3,20 Z M0,20 L1,20 L1,22 L0,22 Z M3,20 L4,20 L4,21 L3,21 Z" fill="#000000" /></svg>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="22"><path d="M0 22V20H1V19H2V18H3V19H4V18H3V14H4V9H5V5H8V9H7V14H6V19H5V20H4V21H3V22ZM6 4V0H9V4Z" fill="#000000" /></svg>'
       )
     })
 
@@ -661,13 +661,13 @@ describe('Bitmap', () => {
 
     test('4 path', () => {
       expect(bitmap_j.tosvg(4, 'path')).toEqual(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="88"><path d="M24,0 L36,0 L36,16 L24,16 Z M20,20 L32,20 L32,36 L20,36 Z M16,36 L28,36 L28,56 L16,56 Z M12,56 L24,56 L24,72 L12,72 Z M8,72 L12,72 L12,88 L8,88 Z M16,72 L24,72 L24,76 L16,76 Z M4,76 L8,76 L8,88 L4,88 Z M12,76 L20,76 L20,80 L12,80 Z M0,80 L4,80 L4,88 L0,88 Z M12,80 L16,80 L16,84 L12,84 Z" fill="#000000" /></svg>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="88"><path d="M0 88V80H4V76H8V72H12V76H16V72H12V56H16V36H20V20H32V36H28V56H24V76H20V80H16V84H12V88ZM24 16V0H36V16Z" fill="#000000" /></svg>'
       )
     })
 
     test('4 pathOnly false', () => {
       expect(bitmap_j.tosvg(4, 'pathOnly', false)).toEqual(
-        'M24,0 L36,0 L36,16 L24,16 Z M20,20 L32,20 L32,36 L20,36 Z M16,36 L28,36 L28,56 L16,56 Z M12,56 L24,56 L24,72 L12,72 Z M8,72 L12,72 L12,88 L8,88 Z M16,72 L24,72 L24,76 L16,76 Z M4,76 L8,76 L8,88 L4,88 Z M12,76 L20,76 L20,80 L12,80 Z M0,80 L4,80 L4,88 L0,88 Z M12,80 L16,80 L16,84 L12,84 Z'
+        'M0 88V80H4V76H8V72H12V76H16V72H12V56H16V36H20V20H32V36H28V56H24V76H20V80H16V84H12V88ZM24 16V0H36V16Z'
       )
     })
 
@@ -679,13 +679,13 @@ describe('Bitmap', () => {
 
     test('10 path true', () => {
       expect(bitmap_j.tosvg(10, 'path', true)).toEqual(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="220"><path d="M60,180 L90,180 L90,220 L60,220 Z M50,130 L80,130 L80,170 L50,170 Z M40,80 L70,80 L70,130 L40,130 Z M30,40 L60,40 L60,80 L30,80 Z M20,0 L30,0 L30,40 L20,40 Z M40,30 L60,30 L60,40 L40,40 Z M10,0 L20,0 L20,30 L10,30 Z M30,20 L50,20 L50,30 L30,30 Z M0,0 L10,0 L10,20 L0,20 Z M30,10 L40,10 L40,20 L30,20 Z" fill="#000000" /></svg>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="220"><path d="M0 0V20H10V30H20V40H30V30H40V40H30V80H40V130H50V170H80V130H70V80H60V30H50V20H40V10H30V0ZM60 180V220H90V180Z" fill="#000000" /></svg>'
       )
     })
 
     test('undefined pathOnly true', () => {
       expect(bitmap_j.tosvg(undefined, 'pathOnly', true)).toEqual(
-        'M6,18 L9,18 L9,22 L6,22 Z M5,13 L8,13 L8,17 L5,17 Z M4,8 L7,8 L7,13 L4,13 Z M3,4 L6,4 L6,8 L3,8 Z M2,0 L3,0 L3,4 L2,4 Z M4,3 L6,3 L6,4 L4,4 Z M1,0 L2,0 L2,3 L1,3 Z M3,2 L5,2 L5,3 L3,3 Z M0,0 L1,0 L1,2 L0,2 Z M3,1 L4,1 L4,2 L3,2 Z'
+        'M0 0V2H1V3H2V4H3V3H4V4H3V8H4V13H5V17H8V13H7V8H6V3H5V2H4V1H3V0ZM6 18V22H9V18Z'
       )
     })
 
@@ -707,25 +707,25 @@ describe('Bitmap', () => {
 
     test('undefined, path, true, {y: 0}', () => {
       expect(bitmap_j.tosvg(undefined, 'path', true, { y: 0 })).toEqual(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="22"><path d="M6,18 L9,18 L9,22 L6,22 Z M5,13 L8,13 L8,17 L5,17 Z M4,8 L7,8 L7,13 L4,13 Z M3,4 L6,4 L6,8 L3,8 Z M2,0 L3,0 L3,4 L2,4 Z M4,3 L6,3 L6,4 L4,4 Z M1,0 L2,0 L2,3 L1,3 Z M3,2 L5,2 L5,3 L3,3 Z M0,0 L1,0 L1,2 L0,2 Z M3,1 L4,1 L4,2 L3,2 Z" fill="#000000" /></svg>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="22"><path d="M0 0V2H1V3H2V4H3V3H4V4H3V8H4V13H5V17H8V13H7V8H6V3H5V2H4V1H3V0ZM6 18V22H9V18Z" fill="#000000" /></svg>'
       )
     })
 
     test('undefined, path, true, {y: -2}', () => {
       expect(bitmap_j.tosvg(undefined, 'path', true, { y: -2 })).toEqual(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="22"><path d="M6,16 L9,16 L9,20 L6,20 Z M5,11 L8,11 L8,15 L5,15 Z M4,6 L7,6 L7,11 L4,11 Z M3,2 L6,2 L6,6 L3,6 Z M2,-2 L3,-2 L3,2 L2,2 Z M4,1 L6,1 L6,2 L4,2 Z M1,-2 L2,-2 L2,1 L1,1 Z M3,0 L5,0 L5,1 L3,1 Z M0,-2 L1,-2 L1,0 L0,0 Z M3,-1 L4,-1 L4,0 L3,0 Z" fill="#000000" /></svg>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="22"><path d="M0 -2V0H1V1H2V2H3V1H4V2H3V6H4V11H5V15H8V11H7V6H6V1H5V0H4V-1H3V-2ZM6 16V20H9V16Z" fill="#000000" /></svg>'
       )
     })
 
     test('2, pathOnly, false, {x: 0, y: 0}', () => {
       expect(bitmap_j.tosvg(2, 'pathOnly', false, { x: 0, y: 0 })).toEqual(
-        'M12,0 L18,0 L18,8 L12,8 Z M10,10 L16,10 L16,18 L10,18 Z M8,18 L14,18 L14,28 L8,28 Z M6,28 L12,28 L12,36 L6,36 Z M4,36 L6,36 L6,44 L4,44 Z M8,36 L12,36 L12,38 L8,38 Z M2,38 L4,38 L4,44 L2,44 Z M6,38 L10,38 L10,40 L6,40 Z M0,40 L2,40 L2,44 L0,44 Z M6,40 L8,40 L8,42 L6,42 Z'
+        'M0 44V40H2V38H4V36H6V38H8V36H6V28H8V18H10V10H16V18H14V28H12V38H10V40H8V42H6V44ZM12 8V0H18V8Z'
       )
     })
 
     test('2, pathOnly, false, {x: -5, y: 12}', () => {
       expect(bitmap_j.tosvg(2, 'pathOnly', false, { x: -5, y: 12 })).toEqual(
-        'M7,12 L13,12 L13,20 L7,20 Z M5,22 L11,22 L11,30 L5,30 Z M3,30 L9,30 L9,40 L3,40 Z M1,40 L7,40 L7,48 L1,48 Z M-1,48 L1,48 L1,56 L-1,56 Z M3,48 L7,48 L7,50 L3,50 Z M-3,50 L-1,50 L-1,56 L-3,56 Z M1,50 L5,50 L5,52 L1,52 Z M-5,52 L-3,52 L-3,56 L-5,56 Z M1,52 L3,52 L3,54 L1,54 Z'
+        'M-5 56V52H-3V50H-1V48H1V50H3V48H1V40H3V30H5V22H11V30H9V40H7V50H5V52H3V54H1V56ZM7 20V12H13V20Z'
       )
     })
   })

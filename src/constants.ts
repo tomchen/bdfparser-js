@@ -1,4 +1,8 @@
-export const PATTERN_VVECTOR_DELIMITER = '[\\s]+'
+/** Library version */
+export const VERSION = '3.0.0'
+
+/** VVECTOR delimiter: whitespace and/or comma */
+export const PATTERN_VVECTOR_DELIMITER = /[\s,]+/
 
 export const EMPTY_GLYPH = {
   glyphname: '.notdef',
@@ -56,20 +60,3 @@ export const DIRE_SHORTCUT_MAP = {
 } as const
 
 export const DIRE_MAP = { lr: 1, rl: 2, tb: 0, bt: -1 } as const
-
-export const NO_QUOTE_PROPS = [
-  'CAP_HEIGHT',
-  'DEFAULT_CHAR',
-  'FONT_ASCENT',
-  'FONT_DESCENT',
-  'POINT_SIZE',
-  'RESOLUTION_X',
-  'RESOLUTION_Y',
-  'X_HEIGHT',
-  'PIXEL_SIZE',
-  'AVERAGE_WIDTH',
-  'MIN_SPACE',
-  'MINSPACE',
-  'UNDERLINE_POSITION',
-  'UNDERLINE_THICKNESS',
-]
